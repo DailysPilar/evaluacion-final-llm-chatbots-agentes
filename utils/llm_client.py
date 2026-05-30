@@ -238,7 +238,7 @@ def _get_gemini_model(tools_schema=None, temperature: float = 0.3):
             "Obtén tu clave en https://aistudio.google.com/app/apikey"
         )
 
-    model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
     genai.configure(api_key=api_key)
 
     generation_config = genai.GenerationConfig(temperature=temperature)
