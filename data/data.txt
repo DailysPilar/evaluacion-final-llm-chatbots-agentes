@@ -1,0 +1,98 @@
+ASISTENTE ACADÉMICO — BASE DE CONOCIMIENTO
+==========================================
+
+## MATEMÁTICAS
+
+### Cálculo Diferencial
+- **Límite**: valor al que se aproxima f(x) cuando x tiende a un punto. Notación: lim(x→a) f(x) = L.
+- **Continuidad**: f es continua en a si existe el límite en a, f(a) está definida y ambos son iguales.
+- **Derivada**: tasa de cambio instantánea. f'(x) = lim(h→0) [f(x+h) - f(x)] / h.
+- **Regla de la cadena**: (f∘g)'(x) = f'(g(x)) · g'(x).
+- **Regla del producto**: (f·g)' = f'·g + f·g'.
+- **Regla del cociente**: (f/g)' = (f'·g - f·g') / g².
+- **Teorema de Rolle**: si f es continua en [a,b], diferenciable en (a,b) y f(a)=f(b), existe c con f'(c)=0.
+- **Teorema del valor medio**: existe c en (a,b) tal que f'(c) = [f(b)-f(a)]/(b-a).
+
+### Cálculo Integral
+- **Integral indefinida**: antiderivada de f(x). ∫f(x)dx = F(x) + C donde F'(x) = f(x).
+- **Integral definida**: área neta bajo la curva entre a y b. ∫[a,b] f(x)dx = F(b) - F(a).
+- **Teorema fundamental del cálculo**: conecta diferenciación e integración.
+- **Integración por partes**: ∫u·dv = u·v - ∫v·du.
+- **Sustitución trigonométrica**: útil cuando aparece √(a²-x²), √(a²+x²) o √(x²-a²).
+
+### Álgebra Lineal
+- **Vector**: magnitud y dirección. Operaciones: suma, producto escalar, producto vectorial.
+- **Matriz**: arreglo rectangular de números. Operaciones: suma, multiplicación, transposición.
+- **Determinante**: escalar asociado a una matriz cuadrada. det(A) ≠ 0 ↔ A es invertible.
+- **Autovalor/Autovector**: Av = λv. λ es el autovalor, v el autovector correspondiente.
+- **Espacio vectorial**: conjunto con operaciones de suma y producto escalar que satisface 8 axiomas.
+- **Base**: conjunto linealmente independiente que genera el espacio. La cantidad de vectores es la dimensión.
+- **Transformación lineal**: T(u+v) = T(u)+T(v) y T(cu) = cT(u).
+
+### Estadística
+- **Media aritmética**: suma de valores dividida por la cantidad. x̄ = Σxᵢ/n.
+- **Varianza**: promedio de desviaciones al cuadrado. σ² = Σ(xᵢ-x̄)²/n.
+- **Desviación estándar**: raíz cuadrada de la varianza. σ.
+- **Distribución normal**: campana de Gauss. Media = mediana = moda. 68-95-99.7 rule.
+- **Distribución binomial**: n ensayos independientes con probabilidad p de éxito. P(X=k) = C(n,k)·pᵏ·(1-p)^(n-k).
+- **Prueba de hipótesis**: H₀ hipótesis nula, H₁ hipótesis alternativa. p-valor < α → rechazar H₀.
+- **Regresión lineal simple**: y = β₀ + β₁x + ε. β₁ = Σ(xᵢ-x̄)(yᵢ-ȳ) / Σ(xᵢ-x̄)².
+
+---
+
+## FÍSICA
+
+### Cinemática
+- **Posición, velocidad, aceleración**: x(t), v(t)=dx/dt, a(t)=dv/dt.
+- **MRU**: v=cte, x = x₀ + v·t.
+- **MRUV**: a=cte, v = v₀ + a·t, x = x₀ + v₀t + ½at².
+- **Tiro parabólico**: movimiento horizontal (MRU) + vertical (MRUV con a=g).
+
+### Dinámica
+- **1ª Ley de Newton**: un objeto en reposo permanece en reposo si la fuerza neta es cero.
+- **2ª Ley de Newton**: F = m·a. La fuerza neta es proporcional a la aceleración.
+- **3ª Ley de Newton**: a cada acción le corresponde una reacción igual y opuesta.
+- **Fricción estática**: fs ≤ μs·N. Fricción cinética: fk = μk·N.
+
+### Trabajo y Energía
+- **Trabajo**: W = F·d·cos(θ). Unidad: Joule (J).
+- **Energía cinética**: Ec = ½mv². **Energía potencial gravitacional**: Ep = mgh.
+- **Teorema trabajo-energía**: W_neto = ΔEc.
+- **Conservación de energía**: Ec + Ep = cte (sin fricción).
+
+---
+
+## PROGRAMACIÓN
+
+### Python — Conceptos básicos
+- **Variables**: asignación dinámica de tipos. x = 5, nombre = "Ana", activo = True.
+- **Listas**: colección ordenada y mutable. lista = [1, 2, 3]. Acceso: lista[0].
+- **Diccionarios**: pares clave-valor. d = {"nombre": "Ana", "edad": 25}. Acceso: d["nombre"].
+- **Funciones**: def mi_funcion(param): return resultado.
+- **Comprensión de listas**: [x**2 for x in range(10) if x % 2 == 0].
+- **Manejo de errores**: try/except/finally. raise Exception("mensaje").
+- **Clases (POO)**: class MiClase: def __init__(self, x): self.x = x.
+
+### Algoritmos y Complejidad
+- **Big O**: O(1) constante, O(log n) logarítmico, O(n) lineal, O(n²) cuadrático.
+- **Búsqueda binaria**: O(log n). Requiere lista ordenada.
+- **Ordenamiento burbuja**: O(n²). **Mergesort/Quicksort**: O(n log n).
+- **Recursión**: función que se llama a sí misma. Necesita caso base y caso recursivo.
+
+---
+
+## METODOLOGÍA DE ESTUDIO
+
+### Técnicas efectivas
+- **Técnica Pomodoro**: 25 minutos de trabajo + 5 minutos de descanso. Cada 4 pomodoros, descanso largo.
+- **Repetición espaciada**: repasar el material en intervalos crecientes (1d, 3d, 7d, 14d, 30d).
+- **Recuperación activa**: en lugar de releer, intentar recordar el material desde cero.
+- **Método Feynman**: explicar el concepto como si fuera a enseñárselo a alguien sin conocimientos previos.
+- **Mapas conceptuales**: representar relaciones entre conceptos visualmente.
+- **Práctica intercalada**: alternar entre distintos temas en lugar de bloquear uno solo.
+
+### Planificación
+- Dividir metas grandes en tareas pequeñas y concretas.
+- Asignar tiempo estimado a cada tarea antes de empezar.
+- Revisar el plan semanalmente y ajustar según progreso real.
+- Priorizar temas difíciles cuando la energía cognitiva es mayor (mañanas para muchos).

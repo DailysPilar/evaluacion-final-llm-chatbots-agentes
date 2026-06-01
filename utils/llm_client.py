@@ -2,7 +2,7 @@
 utils/llm_client.py — Cliente LLM unificado con soporte de tool use
 
 Soporta dos providers configurables desde .env:
-    LLM_PROVIDER=ollama  → llama3.2 vía /api/chat (soporta tool use nativo)
+    LLM_PROVIDER=ollama  → llama3.x vía /api/chat (soporta tool use nativo)
     LLM_PROVIDER=gemini  → Google Gemini vía SDK (soporta function calling)
 
 API pública:
@@ -104,7 +104,7 @@ def call_llm_with_tools(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PROVIDER: OLLAMA (llama3.2 — /api/chat)
+# PROVIDER: OLLAMA (llama3.x — /api/chat)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _get_ollama_config() -> tuple[str, str]:
@@ -113,7 +113,7 @@ def _get_ollama_config() -> tuple[str, str]:
     # Normalizar: aceptar tanto la URL base como la URL con /api/chat o /api/generate
     base_url = base_url.replace("/api/generate", "").replace("/api/chat", "").rstrip("/")
     url   = f"{base_url}/api/chat"
-    model = os.getenv("OLLAMA_MODEL", "llama3.2")
+    model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
     return url, model
 
 
@@ -159,35 +159,69 @@ def _ollama_tool_loop(
     temperature: float,
 ) -> str:
     """
-    Loop de tool use para Ollama/llama3.2.
+    Loop de tool use para Ollama/llama3.x.
 
     Ollama devuelve tool calls en:
         response["message"]["tool_calls"] = [
             {"function": {"name": "...", "arguments": {...}}}
         ]
+
+    Fix problema 8: el fallback anterior hacía messages[-1].get("content") cuando
+    se agotaban las rondas, pero el último mensaje del historial es siempre un
+    mensaje de tipo "tool" (resultado JSON de ejecutar una función), no texto
+    legible para el usuario. Ahora se rastrea por separado el último texto real
+    del asistente y se usa ese como fallback.
+
+    Fix problema 10: si el modelo devuelve contenido vacío Y sin tool_calls,
+    se advierte claramente en lugar de retornar silenciosamente string vacío.
+    Esto ocurre con modelos pequeños (ej: llama3.2:3b) que no soportan tool use.
     """
     messages = [{"role": "user", "content": prompt}]
 
+    # Rastrear el último texto real generado por el asistente (no JSON de tool)
+    last_assistant_text = ""
+
     for round_num in range(MAX_TOOL_ROUNDS):
         raw = _ollama_chat(messages, temperature, tools)
-        message = raw.get("message", {})
+        message    = raw.get("message", {})
         tool_calls = message.get("tool_calls", [])
+        content    = message.get("content", "").strip()
 
-        # Sin tool calls → el modelo generó respuesta final
+        # Sin tool calls → el modelo generó respuesta final en texto
         if not tool_calls:
-            return message.get("content", "").strip()
+            if content:
+                return content
+
+            # Fix problema 10: contenido vacío sin tool calls indica que el modelo
+            # no soporta tool use correctamente (común en modelos pequeños como 3b).
+            # Se avisa con un mensaje claro en lugar de retornar string vacío.
+            if last_assistant_text:
+                return last_assistant_text
+
+            _, model = _get_ollama_config()
+            raise RuntimeError(
+                f"El modelo '{model}' devolvió una respuesta vacía sin tool calls. "
+                "Es posible que no soporte tool use. "
+                "Probá con llama3.1:8b, mistral o qwen2.5:7b."
+            )
+
+        # Guardar el texto del asistente si lo hubo en esta ronda
+        if content:
+            last_assistant_text = content
 
         # Añadir respuesta del asistente al historial
-        messages.append({"role": "assistant", "content": message.get("content", ""),
-                         "tool_calls": tool_calls})
+        messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": tool_calls,
+        })
 
         # Ejecutar cada tool call y añadir resultados al historial
         for tool_call in tool_calls:
-            fn      = tool_call.get("function", {})
-            name    = fn.get("name", "")
-            args    = fn.get("arguments", {})
-
-            result  = _execute_tool(name, args, tool_executor)
+            fn     = tool_call.get("function", {})
+            name   = fn.get("name", "")
+            args   = fn.get("arguments", {})
+            result = _execute_tool(name, args, tool_executor)
 
             # Ollama espera el resultado como mensaje "tool"
             messages.append({
@@ -195,8 +229,12 @@ def _ollama_tool_loop(
                 "content": json.dumps(result, ensure_ascii=False),
             })
 
-    # Si se agotaron las rondas, devolver el último contenido disponible
-    return messages[-1].get("content", "No se pudo completar la respuesta.")
+    # Se agotaron las rondas: usar el último texto real del asistente si existe,
+    # en lugar del último mensaje del historial que sería JSON de una tool (Fix #8)
+    if last_assistant_text:
+        return last_assistant_text
+
+    return "No se pudo completar la respuesta: se agotaron las rondas de tool use."
 
 
 def _to_ollama_tool(tool: dict) -> dict:
@@ -231,6 +269,8 @@ def _get_gemini_model(tools_schema=None, temperature: float = 0.3):
             "Ejecuta: pip install google-generativeai"
         )
 
+    # Fix problema 3: antes se leía GOOGLE_API_KEY que no coincidía con el .env
+    # Ahora se lee GEMINI_API_KEY, consistente con el .env-example corregido
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -238,7 +278,9 @@ def _get_gemini_model(tools_schema=None, temperature: float = 0.3):
             "Obtén tu clave en https://aistudio.google.com/app/apikey"
         )
 
-    model_name = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    # Fix problema 4: el default era gemini-1.5-flash pero el .env tenía un modelo
+    # inválido. Ahora el default es gemini-2.0-flash, consistente con .env-example.
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     genai.configure(api_key=api_key)
 
     generation_config = genai.GenerationConfig(temperature=temperature)

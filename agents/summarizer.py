@@ -93,12 +93,18 @@ def summarizer_agent(state: AcademicState) -> AcademicState:
     topics        = state.get("topics") or []
     topics_str    = ", ".join(topics) if topics else "sin especificar"
 
-    # Si hay documento pre-cargado en el estado, incluirlo en el prompt
-    doc_context = (
-        f"\nDocumento ya cargado en el sistema:\n{document_text[:500]}..."
-        if document_text else
-        "\nNo hay documento pre-cargado. Usa load_document si el usuario menciona un archivo."
-    )
+    # Fix problema 7: antes se truncaba a 500 caracteres con document_text[:500],
+    # lo que hacía que el modelo viera casi nada del documento pre-cargado
+    # y tuviera que llamar a load_document de vuelta de forma redundante.
+    # Ahora se pasa el texto completo. Si es muy largo, el modelo puede invocar
+    # chunk_text por sí mismo para manejarlo en fragmentos.
+    if document_text:
+        doc_context = f"\nDocumento ya cargado en el sistema:\n{document_text}"
+    else:
+        doc_context = (
+            "\nNo hay documento pre-cargado. "
+            "Usa load_document si el usuario menciona un archivo específico."
+        )
 
     prompt_template = _load_prompt()
     prompt = prompt_template.format(

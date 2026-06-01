@@ -1,142 +1,111 @@
 """
-agents/validator.py — Agente Validador / Formateador
+agents/validator.py — Agente Validador
 
-Responsabilidad: recibir la salida de cualquiera de los tres agentes,
-verificar que sea válida y formatearla como respuesta final lista para
-mostrar en Streamlit.
+Responsabilidad:
+  - Verificar que el agente anterior haya producido una respuesta no vacía
+  - Armar el campo final_response con el resultado correspondiente al intent
+  - Controlar el loop de reintentos usando MAX_RETRIES desde .env
+  - Registrar errores claros si se agota el límite de reintentos
 
-También maneja el caso de intent "desconocido" y los reintentos.
+El validador NO llama al LLM: es lógica pura en Python.
 """
 
+import os
+from dotenv import load_dotenv
 from utils.logger import log_event
 from state import AcademicState
 
-# Máximo de reintentos antes de devolver un mensaje de error al usuario
-MAX_RETRIES = 2
+load_dotenv()
+
+# Límite de reintentos leído desde .env (antes ignorado porque el archivo estaba vacío)
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 
 def validator_agent(state: AcademicState) -> AcademicState:
     """
     Nodo validador del grafo LangGraph.
 
-    Lee:    state["intent"], state["plan"], state["explanation"],
-            state["summary"], state["retry_count"]
+    Lee:    state["intent"], state["plan"] | state["explanation"] | state["summary"]
     Escribe: state["final_response"], state["error"], state["retry_count"]
 
     Lógica:
-      - Si hay una respuesta válida del agente correspondiente → formatearla
-      - Si la respuesta está vacía → incrementar retry_count y marcar error
-      - Si intent es "desconocido" → responder con mensaje de ayuda
+      1. Detecta qué campo de respuesta corresponde al intent activo
+      2. Si el campo tiene contenido válido → arma final_response
+      3. Si está vacío o es None → incrementa retry_count y registra error
     """
-    log_event("validator", "Validando respuesta del agente")
-
-    intent = state.get("intent", "desconocido")
+    intent      = state.get("intent", "desconocido")
     retry_count = state.get("retry_count", 0)
 
-    # Obtener la respuesta según el intent
-    agent_response = _get_agent_response(state, intent)
+    log_event("validator", f"Validando respuesta para intent='{intent}' | retry={retry_count}")
 
-    # Caso: intent no reconocido
-    if intent == "desconocido":
+    # Mapa intent → campo del estado donde el agente dejó su respuesta
+    intent_to_field = {
+        "planificar": "plan",
+        "explicar":   "explanation",
+        "resumir":    "summary",
+    }
+
+    response_field = intent_to_field.get(intent)
+    response_value = state.get(response_field) if response_field else None
+
+    # ── Respuesta válida ──────────────────────────────────────────────────────
+    if response_value and response_value.strip():
+        log_event("validator", "Respuesta válida. Preparando final_response.")
         return {
             **state,
-            "final_response": _unknown_intent_message(),
+            "final_response": response_value.strip(),
             "error": None,
         }
 
-    # Caso: respuesta vacía o inválida
-    if not _is_valid_response(agent_response):
-        log_event("validator", f"Respuesta inválida. Retry {retry_count + 1}/{MAX_RETRIES}")
+    # ── Respuesta inválida: decidir si reintentar ─────────────────────────────
+    new_retry_count = retry_count + 1
+
+    if new_retry_count >= MAX_RETRIES:
+        # Se agotaron los reintentos: entregar mensaje de error al usuario
+        error_msg = (
+            f"No se pudo generar una respuesta válida para tu solicitud "
+            f"después de {MAX_RETRIES} intentos.\n\n"
+            f"Intent detectado: **{intent}**\n\n"
+            "Por favor reformulá tu pregunta e intentá de nuevo."
+        )
+        log_event("validator", f"MAX_RETRIES={MAX_RETRIES} alcanzado. Finalizando con error.")
         return {
             **state,
-            "retry_count": retry_count + 1,
-            "error": f"El agente '{intent}' no generó una respuesta válida.",
-            "final_response": None,
+            "final_response": error_msg,
+            "error": f"Respuesta vacía tras {MAX_RETRIES} reintentos",
+            "retry_count": new_retry_count,
         }
 
-    # Caso: respuesta válida → formatear y entregar
-    formatted = _format_response(agent_response, intent)
-    log_event("validator", "Respuesta validada y formateada correctamente")
-
+    # Todavía hay reintentos disponibles: señalar para volver al router
+    log_event("validator", f"Respuesta vacía. Reintentando ({new_retry_count}/{MAX_RETRIES}).")
     return {
         **state,
-        "final_response": formatted,
-        "error": None,
+        "error": f"Respuesta vacía en campo '{response_field}' (intento {new_retry_count})",
+        "retry_count": new_retry_count,
+        # Limpiar el campo fallido para que el agente lo regenere desde cero
+        response_field: None,
     }
 
 
 def should_retry(state: AcademicState) -> str:
     """
-    Función de ruteo condicional post-validador para LangGraph.
+    Función de ruteo condicional para LangGraph.
+    Decide si el grafo debe reintentar o finalizar.
 
-    Retorna:
-      "retry"   → si hay error y no se superó el límite de reintentos
-      "end"     → si la respuesta es válida o se agotaron los reintentos
+    Returns:
+        "retry" → volver al router para regenerar la respuesta
+        "end"   → entregar final_response a Streamlit
     """
-    error = state.get("error")
     retry_count = state.get("retry_count", 0)
+    error       = state.get("error")
+    final       = state.get("final_response")
 
-    if error and retry_count <= MAX_RETRIES:
-        log_event("validator", f"Reintentando... ({retry_count}/{MAX_RETRIES})")
-        return "retry"
-
-    if error and retry_count > MAX_RETRIES:
-        # Agotar reintentos: poner mensaje de error como respuesta final
-        log_event("validator", "Reintentos agotados. Entregando error al usuario.")
+    # Si hay respuesta final (válida o mensaje de error por agotamiento) → terminar
+    if final:
         return "end"
 
+    # Si hay error y no se agotaron los reintentos → reintentar
+    if error and retry_count < MAX_RETRIES:
+        return "retry"
+
     return "end"
-
-
-# ---- helpers privados ----
-
-def _get_agent_response(state: AcademicState, intent: str) -> str:
-    """Obtiene la respuesta del agente correspondiente al intent."""
-    mapping = {
-        "planificar": state.get("plan"),
-        "explicar":   state.get("explanation"),
-        "resumir":    state.get("summary"),
-    }
-    return mapping.get(intent, "")
-
-
-def _is_valid_response(response: str) -> bool:
-    """
-    Verifica que la respuesta no esté vacía ni sea un error del modelo.
-    Se puede extender para validar estructura Markdown, longitud mínima, etc.
-    """
-    if not response:
-        return False
-    if len(response.strip()) < 50:
-        return False
-    # Detectar si el modelo devolvió un mensaje de error genérico
-    error_phrases = ["no sé", "no puedo", "error", "lo siento, no"]
-    response_lower = response.lower()
-    if any(phrase in response_lower for phrase in error_phrases):
-        return False
-    return True
-
-
-def _format_response(response: str, intent: str) -> str:
-    """
-    Añade un encabezado contextual según el tipo de respuesta.
-    El resultado se renderiza como Markdown en Streamlit.
-    """
-    headers = {
-        "planificar": "## 📅 Tu plan de estudio",
-        "explicar":   "## 💡 Explicación del concepto",
-        "resumir":    "## 📄 Resumen generado",
-    }
-    header = headers.get(intent, "## Respuesta")
-    return f"{header}\n\n{response}"
-
-
-def _unknown_intent_message() -> str:
-    """Mensaje de ayuda cuando el intent no fue reconocido."""
-    return (
-        "## ¿En qué puedo ayudarte?\n\n"
-        "No entendí bien tu solicitud. Puedo ayudarte con:\n\n"
-        "- 📅 **Planificar** tu estudio: *\"Quiero estudiar álgebra lineal en 3 semanas\"*\n"
-        "- 💡 **Explicar** un concepto: *\"Explícame qué es una derivada\"*\n"
-        "- 📄 **Resumir** un tema o documento: *\"Resume el tema de termodinámica\"*"
-    )

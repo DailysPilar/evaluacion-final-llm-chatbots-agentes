@@ -1,0 +1,72 @@
+{
+  "ejemplos_por_intent": {
+    "planificar": [
+      {
+        "input": "Quiero aprender cálculo diferencial en 3 semanas",
+        "topics": ["cálculo"],
+        "descripcion": "Plan corto intensivo para un tema específico"
+      },
+      {
+        "input": "Tengo parcial de álgebra lineal en 2 semanas, ayudame a organizarme",
+        "topics": ["álgebra"],
+        "descripcion": "Plan orientado a un examen próximo"
+      },
+      {
+        "input": "Quiero estudiar programación en Python desde cero este mes",
+        "topics": ["programación"],
+        "descripcion": "Plan introductorio de un mes"
+      }
+    ],
+    "explicar": [
+      {
+        "input": "¿Qué es una derivada y para qué sirve?",
+        "topics": ["cálculo", "derivada"],
+        "descripcion": "Consulta de concepto fundamental de cálculo"
+      },
+      {
+        "input": "Explicame el teorema de Bayes con un ejemplo",
+        "topics": ["estadística", "probabilidad"],
+        "descripcion": "Solicitud de explicación con ejemplo concreto"
+      },
+      {
+        "input": "No entiendo la diferencia entre recursión e iteración",
+        "topics": ["programación", "algoritmos"],
+        "descripcion": "Comparación de dos conceptos relacionados"
+      },
+      {
+        "input": "¿Cómo funciona la segunda ley de Newton?",
+        "topics": ["física", "dinámica"],
+        "descripcion": "Pregunta sobre ley física fundamental"
+      }
+    ],
+    "resumir": [
+      {
+        "input": "Resume el tema de distribuciones de probabilidad",
+        "topics": ["estadística", "probabilidad"],
+        "descripcion": "Resumen de un tema de estadística"
+      },
+      {
+        "input": "Haceme un resumen de álgebra lineal para repasar antes del examen",
+        "topics": ["álgebra"],
+        "descripcion": "Resumen de repaso pre-examen"
+      },
+      {
+        "input": "Resume el archivo apuntes.txt",
+        "topics": [],
+        "descripcion": "Solicitud de resumen de documento propio del usuario"
+      }
+    ]
+  },
+  "frases_ambiguas": [
+    {
+      "input": "necesito ayuda con física",
+      "intent_esperado": "explicar",
+      "nota": "Muy vaga, el router debería pedir más detalle o asumir 'explicar'"
+    },
+    {
+      "input": "física cuántica",
+      "intent_esperado": "explicar",
+      "nota": "Solo un tema, sin verbo. Interpretar como solicitud de explicación"
+    }
+  ]
+}

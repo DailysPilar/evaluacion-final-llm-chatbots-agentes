@@ -1,7 +1,7 @@
 """
 agents/planner.py — Agente Planificador con tool use
 
-El modelo puede invocar topic_splitter y study_schedule_generator
+El modelo puede invocar split_topics y generate_schedule
 para construir el plan. Decide el orden y cuántas veces usarlas.
 """
 
@@ -59,7 +59,9 @@ PLANNER_TOOLS = [
     },
 ]
 
-# Adaptadores: las tools del modelo reciben strings, las funciones Python listas
+# Adaptadores: las tools del modelo reciben strings, las funciones Python listas.
+# Fix problema 6 (aplicado aquí también): split_topics ahora acepta separadores
+# múltiples internamente, pero el adaptador sigue siendo consistente.
 PLANNER_TOOL_EXECUTOR = {
     "split_topics": lambda topics, user_input="": str(
         split_topics([t.strip() for t in topics.split(",")], user_input)
@@ -88,6 +90,12 @@ def planner_agent(state: AcademicState) -> AcademicState:
     El modelo recibe la solicitud del estudiante y las tools disponibles.
     Decide autónomamente: primero split_topics para granularidad,
     luego generate_schedule para el cronograma, finalmente redacta el plan.
+
+    Fix problema 11: se eliminó el campo {raw_schedule} del format() porque
+    el prompt nunca recibía un cronograma real — siempre era el string fijo
+    "Usa las tools para generar el cronograma paso a paso." Ahora el prompt
+    le indica directamente al modelo que use las tools, sin un placeholder
+    que induce a pensar que recibirá datos pre-calculados.
     """
     log_event("planner", "Iniciando generación de plan con tool use")
 
@@ -96,11 +104,11 @@ def planner_agent(state: AcademicState) -> AcademicState:
     topics_str = ", ".join(topics) if topics else "sin especificar"
 
     prompt_template = _load_prompt()
+
+    # Fix problema 11: se removió raw_schedule del .format()
     prompt = prompt_template.format(
         user_input=user_input,
         topics=topics_str,
-        # El cronograma ya no se pre-calcula: el modelo lo construye con tools
-        raw_schedule="Usa las tools para generar el cronograma paso a paso.",
     )
 
     plan = call_llm_with_tools(
