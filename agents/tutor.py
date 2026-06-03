@@ -13,7 +13,7 @@ from tools.wikipedia_search import search_wikipedia
 from state import AcademicState
 
 
-# ── Definición de tools (formato unificado Ollama/Gemini) ─────────────────────
+# ── Definición de tools ───────────────────────────────────────────────────────
 
 TUTOR_TOOLS = [
     {
@@ -76,7 +76,10 @@ def tutor_agent(state: AcademicState) -> AcademicState:
 
     El modelo recibe la pregunta + las definiciones de tools y decide
     autónomamente si buscar en documentos locales, en Wikipedia, en ambos,
-    o en ninguno. El loop de tool use se maneja en llm_client.py.
+    o en ninguno.
+
+    max_rounds=2: una ronda para buscar contexto con las tools,
+    otra ronda para generar la explicación final. Evita loops lentos.
     """
     log_event("tutor", "Iniciando explicación de concepto con tool use")
 
@@ -88,15 +91,17 @@ def tutor_agent(state: AcademicState) -> AcademicState:
     prompt = prompt_template.format(
         user_input=user_input,
         topics=topics_str,
-        # El contexto ya no se inyecta aquí: el modelo lo busca con las tools
         context="Usa las tools disponibles para buscar contexto relevante.",
     )
+
+    log_event("tutor", f"Prompt listo — enviando al LLM (topics: {topics_str})")
 
     explanation = call_llm_with_tools(
         prompt=prompt,
         tools=TUTOR_TOOLS,
         tool_executor=TUTOR_TOOL_EXECUTOR,
         temperature=0.5,
+        max_rounds=2,   # 1 ronda de tools + 1 ronda de respuesta final
     )
 
     log_event("tutor", "Explicación generada exitosamente")

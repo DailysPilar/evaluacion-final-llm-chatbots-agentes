@@ -5,10 +5,11 @@ Solicitud del estudiante:
 
 Temas identificados: {topics}
 
-Cronograma preliminar sugerido:
-{raw_schedule}
+Para crear el plan, usa las tools disponibles en este orden:
+1. Primero llama a split_topics para descomponer los temas en subtemas concretos
+2. Luego llama a generate_schedule para distribuirlos en semanas
 
-Genera un plan de estudio completo en Markdown con:
+Con el cronograma generado por las tools, redacta un plan de estudio completo en Markdown con:
 1. Una introducción breve con el objetivo del plan
 2. El cronograma semanal detallado (expande el preliminar con descripción de cada tema)
 3. Para cada semana: qué estudiar, cómo estudiarlo y cuánto tiempo dedicarle

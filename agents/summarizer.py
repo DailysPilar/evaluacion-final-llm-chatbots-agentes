@@ -124,8 +124,8 @@ def summarizer_agent(state: AcademicState) -> AcademicState:
     formatted = format_summary(raw_summary, topics)
 
     log_event("summarizer", "Resumen generado exitosamente")
+    print(f"Summary: {formatted}\n" )  # Debug adicional para verificar parsing
 
     return {
-        **state,
         "summary": formatted,
     }

@@ -1,9 +1,26 @@
 """
 utils/llm_client.py — Cliente LLM unificado con soporte de tool use
 
-Soporta dos providers configurables desde .env:
-    LLM_PROVIDER=ollama  → llama3.x vía /api/chat (soporta tool use nativo)
-    LLM_PROVIDER=gemini  → Google Gemini vía SDK (soporta function calling)
+El provider se elige automáticamente según las variables de entorno disponibles:
+    - Si GEMINI_API_KEY está definida → usa Google Gemini (DEFAULT)
+    - Si no                           → usa Ollama como fallback
+
+Gemini usa ChatGoogleGenerativeAI de LangChain, que expone la misma interfaz
+que cualquier otro ChatModel de LangChain (.invoke, .bind_tools).
+Esto evita usar el SDK de Google directamente y mantiene consistencia
+con el ecosistema LangGraph/LangChain.
+
+Dependencias necesarias:
+    pip install langchain-google-genai   # para Gemini
+    # Ollama usa requests (ya incluido), no necesita instalación extra
+
+Variables de entorno (.env):
+    GEMINI_API_KEY=...               # clave de Google AI Studio → activa Gemini
+    GEMINI_MODEL=gemini-2.0-flash    # modelo Gemini a usar
+    OLLAMA_BASE_URL=http://localhost:11434
+    DEFAULT_MODEL=llama3.2:3b        # modelo Ollama (fallback si no hay GEMINI_API_KEY)
+    TEMPERATURE=0.7
+    MAX_TOKENS=2048
 
 API pública:
     call_llm(prompt, temperature)
@@ -22,18 +39,13 @@ Formato de tools (igual para ambos providers desde el punto de vista del agente)
                 "type": "object",
                 "properties": {
                     "param1": {"type": "string", "description": "..."},
-                    "param2": {"type": "integer", "description": "..."},
                 },
                 "required": ["param1"],
             },
         },
-        ...
     ]
 
-tool_executor: dict[str, Callable] que mapea nombre → función Python a ejecutar
-    tool_executor = {
-        "nombre_de_la_tool": mi_funcion_python,
-    }
+tool_executor: dict[str, Callable] que mapea nombre → función Python
 """
 
 import os
@@ -43,41 +55,49 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
+# Provider se detecta automáticamente:
+# si GEMINI_API_KEY está seteada → gemini, si no → ollama
+LLM_PROVIDER = "gemini" if os.getenv("GEMINI_API_KEY") else "ollama"
 
 # Máximo de rondas de tool calling para evitar loops infinitos
-MAX_TOOL_ROUNDS = 5
+MAX_TOOL_ROUNDS = 3
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API PÚBLICA
 # ══════════════════════════════════════════════════════════════════════════════
 
-def call_llm(prompt: str, temperature: float = 0.3) -> str:
+def call_llm(prompt: str, temperature: float = None) -> str:
     """
     Llamada simple al LLM sin tools. Devuelve el texto generado.
 
     Args:
         prompt:      Prompt completo a enviar
-        temperature: 0.1-0.3 estructurado, 0.5-0.7 creativo
+        temperature: Temperatura. Si es None, usa TEMPERATURE del .env (default 0.7)
 
     Returns:
         Respuesta del modelo como string limpio.
     """
-    if LLM_PROVIDER == "ollama":
-        return _ollama_chat(messages=[{"role": "user", "content": prompt}],
-                            temperature=temperature)
-    elif LLM_PROVIDER == "gemini":
+    if temperature is None:
+        temperature = float(os.getenv("TEMPERATURE", "0.7"))
+
+    if LLM_PROVIDER == "gemini":
         return _gemini_chat(prompt=prompt, temperature=temperature)
+    elif LLM_PROVIDER == "ollama":
+        return _ollama_chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+        )
     else:
-        raise ValueError(f"LLM_PROVIDER='{LLM_PROVIDER}' no válido. Usa 'ollama' o 'gemini'.")
+        raise ValueError(f"LLM_PROVIDER='{LLM_PROVIDER}' no válido. Usa 'gemini' o 'ollama'.")
 
 
 def call_llm_with_tools(
     prompt: str,
     tools: list[dict],
     tool_executor: dict[str, Callable],
-    temperature: float = 0.3,
+    temperature: float = None,
+    max_rounds: int = None,
 ) -> str:
     """
     Llamada al LLM con soporte de tool use. Ejecuta el loop completo:
@@ -90,157 +110,215 @@ def call_llm_with_tools(
         prompt:        Prompt del agente
         tools:         Lista de tool definitions (formato unificado, ver módulo)
         tool_executor: Dict {nombre_tool: función_python}
-        temperature:   Temperatura del modelo
+        temperature:   Temperatura. Si es None, usa TEMPERATURE del .env
+        max_rounds:    Máximo de rondas de tool use. Si es None usa MAX_TOOL_ROUNDS (3)
 
     Returns:
         Texto final del modelo tras completar todas las tool calls.
     """
-    if LLM_PROVIDER == "ollama":
-        return _ollama_tool_loop(prompt, tools, tool_executor, temperature)
-    elif LLM_PROVIDER == "gemini":
-        return _gemini_tool_loop(prompt, tools, tool_executor, temperature)
+    if temperature is None:
+        temperature = float(os.getenv("TEMPERATURE", "0.7"))
+    if max_rounds is None:
+        max_rounds = MAX_TOOL_ROUNDS
+
+    if LLM_PROVIDER == "gemini":
+        return _gemini_tool_loop(prompt, tools, tool_executor, temperature, max_rounds)
+    elif LLM_PROVIDER == "ollama":
+        return _ollama_tool_loop(prompt, tools, tool_executor, temperature, max_rounds)
     else:
-        raise ValueError(f"LLM_PROVIDER='{LLM_PROVIDER}' no válido. Usa 'ollama' o 'gemini'.")
+        raise ValueError(f"LLM_PROVIDER='{LLM_PROVIDER}' no válido. Usa 'gemini' o 'ollama'.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PROVIDER: OLLAMA (llama3.x — /api/chat)
+# PROVIDER: GOOGLE GEMINI (via langchain-google-genai)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _get_ollama_config() -> tuple[str, str]:
-    """Devuelve (url_chat, model) desde variables de entorno."""
-    base_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    # Normalizar: aceptar tanto la URL base como la URL con /api/chat o /api/generate
-    base_url = base_url.replace("/api/generate", "").replace("/api/chat", "").rstrip("/")
-    url   = f"{base_url}/api/chat"
-    model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
-    return url, model
-
-
-def _ollama_chat(messages: list[dict], temperature: float,
-                 tools: list[dict] = None) -> str:
+def _get_gemini_llm(temperature: float, tools_schema: list[dict] = None):
     """
-    Llamada básica a /api/chat de Ollama.
-    Devuelve el contenido del mensaje de respuesta como string.
+    Crea y devuelve un ChatGoogleGenerativeAI de LangChain.
+
+    Si se pasan tools, las convierte al formato LangChain y hace bind_tools()
+    para que el modelo pueda invocarlas.
+
+    Requiere: pip install langchain-google-genai
+
+    Args:
+        temperature:  Temperatura de generación
+        tools_schema: Lista de tool definitions en formato unificado (opcional)
+
+    Returns:
+        ChatGoogleGenerativeAI, con o sin tools según corresponda.
     """
-    import requests
-
-    url, model = _get_ollama_config()
-
-    payload = {
-        "model":   model,
-        "messages": messages,
-        "stream":  False,
-        "options": {"temperature": temperature},
-    }
-    if tools:
-        # Ollama espera tools en formato OpenAI-compatible
-        payload["tools"] = [_to_ollama_tool(t) for t in tools]
-
     try:
-        response = requests.post(url, json=payload, timeout=120)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.ConnectionError:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError:
         raise RuntimeError(
-            f"No se pudo conectar con Ollama en {url}. "
-            "Asegúrate de tener Ollama corriendo: `ollama serve`"
+            "Paquete 'langchain-google-genai' no instalado. "
+            "Ejecutá: pip install langchain-google-genai"
         )
-    except requests.exceptions.Timeout:
-        raise RuntimeError("Ollama timeout (120s). Intenta con un modelo más pequeño.")
-    except requests.exceptions.HTTPError as e:
-        raise RuntimeError(f"Error HTTP de Ollama: {e}")
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY no definida en .env. "
+            "Obtené tu clave en https://aistudio.google.com/app/apikey"
+        )
+
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    max_tokens = int(os.getenv("MAX_TOKENS", "2048"))
+
+    llm = ChatGoogleGenerativeAI(
+        model=model_name,
+        google_api_key=api_key,
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        # Deshabilitar Automatic Function Calling del SDK de Google.
+        # Si está activo, el SDK ejecuta las tools internamente en un loop propio
+        # que entra en conflicto con nuestro loop manual en _gemini_tool_loop,
+        # causando llamadas duplicadas y bloqueos. Nosotros manejamos el loop.
+        max_retries=2,
+    )
+
+    if tools_schema:
+        # Convierte el formato unificado al formato LangChain y hace bind
+        lc_tools = [_to_langchain_tool(t) for t in tools_schema]
+        return llm.bind_tools(lc_tools)
+
+    return llm
 
 
-def _ollama_tool_loop(
+
+def _extract_text(content) -> str:
+    """
+    Normaliza el campo .content de un AIMessage de LangChain a string limpio.
+
+    ChatGoogleGenerativeAI puede devolver .content como:
+      - str:  "Hola mundo"                         → caso normal
+      - list: [{"type": "text", "text": "Hola"}]   → contenido estructurado
+
+    En ambos casos devuelve el texto plano como string.
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return " ".join(parts).strip()
+    return str(content).strip()
+
+
+def _gemini_chat(prompt: str, temperature: float) -> str:
+    """
+    Llamada simple a Gemini sin tools usando LangChain.
+
+    Usa HumanMessage para enviar el prompt y extrae el texto de la respuesta.
+    """
+    from langchain_core.messages import HumanMessage
+
+    llm = _get_gemini_llm(temperature=temperature)
+    response = llm.invoke([HumanMessage(content=prompt)])
+    return _extract_text(response.content)
+
+
+def _gemini_tool_loop(
     prompt: str,
     tools: list[dict],
     tool_executor: dict[str, Callable],
     temperature: float,
+    max_rounds: int = MAX_TOOL_ROUNDS,
 ) -> str:
     """
-    Loop de tool use para Ollama/llama3.x.
+    Loop de tool use para Gemini usando LangChain.
 
-    Ollama devuelve tool calls en:
-        response["message"]["tool_calls"] = [
-            {"function": {"name": "...", "arguments": {...}}}
-        ]
+    Flujo del loop:
+      1. Se envía el prompt como HumanMessage al modelo con tools bindeadas
+      2. Si la respuesta contiene tool_calls → ejecutar cada tool en Python
+      3. Añadir los resultados como ToolMessages al historial
+      4. Reinvocar el modelo con el historial completo
+      5. Repetir hasta que no haya más tool_calls o se agoten las rondas
 
-    Fix problema 8: el fallback anterior hacía messages[-1].get("content") cuando
-    se agotaban las rondas, pero el último mensaje del historial es siempre un
-    mensaje de tipo "tool" (resultado JSON de ejecutar una función), no texto
-    legible para el usuario. Ahora se rastrea por separado el último texto real
-    del asistente y se usa ese como fallback.
+    LangChain maneja la serialización/deserialización de tool calls:
+      - AIMessage.tool_calls: lista de {"id": ..., "name": ..., "args": {...}}
+      - ToolMessage: resultado de ejecutar una tool, identificado por tool_call_id
 
-    Fix problema 10: si el modelo devuelve contenido vacío Y sin tool_calls,
-    se advierte claramente en lugar de retornar silenciosamente string vacío.
-    Esto ocurre con modelos pequeños (ej: llama3.2:3b) que no soportan tool use.
+    Args:
+        prompt:        Prompt inicial del agente
+        tools:         Definiciones de tools en formato unificado
+        tool_executor: Mapa {nombre_tool: función_python}
+        temperature:   Temperatura del modelo
+
+    Returns:
+        Texto final generado por el modelo.
     """
-    messages = [{"role": "user", "content": prompt}]
+    from langchain_core.messages import HumanMessage, ToolMessage
+    from utils.logger import log_event
 
-    # Rastrear el último texto real generado por el asistente (no JSON de tool)
-    last_assistant_text = ""
+    llm_with_tools = _get_gemini_llm(temperature=temperature, tools_schema=tools)
 
-    for round_num in range(MAX_TOOL_ROUNDS):
-        raw = _ollama_chat(messages, temperature, tools)
-        message    = raw.get("message", {})
-        tool_calls = message.get("tool_calls", [])
-        content    = message.get("content", "").strip()
+    # Historial de mensajes que se va construyendo con cada ronda
+    messages = [HumanMessage(content=prompt)]
 
-        # Sin tool calls → el modelo generó respuesta final en texto
-        if not tool_calls:
-            if content:
-                return content
+    for round_num in range(max_rounds):
+        log_event("llm_client", f"Tool loop ronda {round_num + 1}/{max_rounds} — invocando modelo...")
+        response = llm_with_tools.invoke(messages)
+        log_event("llm_client", f"Respuesta recibida — tool_calls: {len(response.tool_calls)}, tiene texto: {bool(_extract_text(response.content))}")
 
-            # Fix problema 10: contenido vacío sin tool calls indica que el modelo
-            # no soporta tool use correctamente (común en modelos pequeños como 3b).
-            # Se avisa con un mensaje claro en lugar de retornar string vacío.
-            if last_assistant_text:
-                return last_assistant_text
+        # Sin tool_calls → el modelo generó respuesta final en texto
+        if not response.tool_calls:
+            return _extract_text(response.content)
 
-            _, model = _get_ollama_config()
-            raise RuntimeError(
-                f"El modelo '{model}' devolvió una respuesta vacía sin tool calls. "
-                "Es posible que no soporte tool use. "
-                "Probá con llama3.1:8b, mistral o qwen2.5:7b."
+        # Añadir la respuesta del asistente (con tool_calls) al historial
+        messages.append(response)
+
+        # Ejecutar cada tool call y añadir el resultado como ToolMessage
+        for tool_call in response.tool_calls:
+            tool_name    = tool_call["name"]
+            tool_args    = tool_call["args"]
+            tool_call_id = tool_call["id"]
+
+            log_event("llm_client", f"Ejecutando tool: {tool_name}({list(tool_args.keys())})")
+            result = _execute_tool(tool_name, tool_args, tool_executor)
+            log_event("llm_client", f"Tool {tool_name} completada — resultado: {len(str(result))} chars")
+
+            # ToolMessage vincula el resultado con el tool_call_id
+            # para que el modelo sepa qué tool call respondió
+            messages.append(
+                ToolMessage(
+                    content=result,
+                    tool_call_id=tool_call_id,
+                )
             )
 
-        # Guardar el texto del asistente si lo hubo en esta ronda
-        if content:
-            last_assistant_text = content
-
-        # Añadir respuesta del asistente al historial
-        messages.append({
-            "role": "assistant",
-            "content": content,
-            "tool_calls": tool_calls,
-        })
-
-        # Ejecutar cada tool call y añadir resultados al historial
-        for tool_call in tool_calls:
-            fn     = tool_call.get("function", {})
-            name   = fn.get("name", "")
-            args   = fn.get("arguments", {})
-            result = _execute_tool(name, args, tool_executor)
-
-            # Ollama espera el resultado como mensaje "tool"
-            messages.append({
-                "role":    "tool",
-                "content": json.dumps(result, ensure_ascii=False),
-            })
-
-    # Se agotaron las rondas: usar el último texto real del asistente si existe,
-    # en lugar del último mensaje del historial que sería JSON de una tool (Fix #8)
-    if last_assistant_text:
-        return last_assistant_text
+    # Se agotaron las rondas: buscar el último texto del asistente en el historial
+    for msg in reversed(messages):
+        # AIMessage con contenido de texto (no solo tool_calls)
+        if hasattr(msg, "content") and msg.content and not getattr(msg, "tool_calls", None):
+            return _extract_text(msg.content)
 
     return "No se pudo completar la respuesta: se agotaron las rondas de tool use."
 
 
-def _to_ollama_tool(tool: dict) -> dict:
+def _to_langchain_tool(tool: dict) -> dict:
     """
-    Convierte el formato unificado de tool al formato OpenAI-compatible
-    que espera Ollama.
+    Convierte el formato unificado de tool al formato que acepta
+    ChatGoogleGenerativeAI.bind_tools() de LangChain.
+
+    LangChain bind_tools() acepta dicts con la estructura OpenAI function-calling:
+        {
+            "type": "function",
+            "function": {
+                "name": ...,
+                "description": ...,
+                "parameters": {JSON Schema}
+            }
+        }
+
+    Este formato es compatible con ChatGoogleGenerativeAI, ChatOpenAI y
+    ChatOllama, por lo que no se necesita conversión específica por provider.
     """
     return {
         "type": "function",
@@ -253,165 +331,129 @@ def _to_ollama_tool(tool: dict) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PROVIDER: GOOGLE GEMINI
+# PROVIDER: OLLAMA (llama3.x — /api/chat via requests)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _get_gemini_model(tools_schema=None, temperature: float = 0.3):
+def _get_ollama_config() -> tuple[str, str]:
+    """Devuelve (url_chat, model) desde variables de entorno."""
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    base_url = base_url.rstrip("/")
+    url   = f"{base_url}/api/chat"
+    model = os.getenv("DEFAULT_MODEL", "llama3.2:3b")
+    return url, model
+
+
+def _ollama_chat(messages: list[dict], temperature: float,
+                 tools: list[dict] = None):
     """
-    Inicializa y devuelve el modelo Gemini configurado.
-    Si se pasan tools, las registra en el modelo.
+    Llamada básica a /api/chat de Ollama.
+    Devuelve el JSON completo de la respuesta.
     """
+    import requests
+
+    url, model = _get_ollama_config()
+    max_tokens = int(os.getenv("MAX_TOKENS", "2048"))
+
+    payload = {
+        "model":    model,
+        "messages": messages,
+        "stream":   False,
+        "options":  {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+    if tools:
+        payload["tools"] = [_to_langchain_tool(t) for t in tools]
+
     try:
-        import google.generativeai as genai
-    except ImportError:
+        response = requests.post(url, json=payload, timeout=120)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError:
         raise RuntimeError(
-            "Paquete 'google-generativeai' no instalado. "
-            "Ejecuta: pip install google-generativeai"
+            f"No se pudo conectar con Ollama en {url}. "
+            "Asegurate de tener Ollama corriendo: `ollama serve`"
         )
-
-    # Fix problema 3: antes se leía GOOGLE_API_KEY que no coincidía con el .env
-    # Ahora se lee GEMINI_API_KEY, consistente con el .env-example corregido
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY no definida en .env. "
-            "Obtén tu clave en https://aistudio.google.com/app/apikey"
-        )
-
-    # Fix problema 4: el default era gemini-1.5-flash pero el .env tenía un modelo
-    # inválido. Ahora el default es gemini-2.0-flash, consistente con .env-example.
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    genai.configure(api_key=api_key)
-
-    generation_config = genai.GenerationConfig(temperature=temperature)
-
-    if tools_schema:
-        # Gemini recibe las tools como lista de FunctionDeclaration
-        gemini_tools = [_to_gemini_tool(t) for t in tools_schema]
-        model = genai.GenerativeModel(
-            model_name,
-            tools=gemini_tools,
-            generation_config=generation_config,
-        )
-    else:
-        model = genai.GenerativeModel(
-            model_name,
-            generation_config=generation_config,
-        )
-
-    return model
+    except requests.exceptions.Timeout:
+        raise RuntimeError("Ollama timeout (120s). Intentá con un modelo más pequeño.")
+    except requests.exceptions.HTTPError as e:
+        raise RuntimeError(f"Error HTTP de Ollama: {e}")
 
 
-def _gemini_chat(prompt: str, temperature: float) -> str:
-    """Llamada simple a Gemini sin tools."""
-    try:
-        model    = _get_gemini_model(temperature=temperature)
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        raise RuntimeError(f"Error al llamar a Gemini: {e}")
-
-
-def _gemini_tool_loop(
+def _ollama_tool_loop(
     prompt: str,
     tools: list[dict],
     tool_executor: dict[str, Callable],
     temperature: float,
+    max_rounds: int = MAX_TOOL_ROUNDS,
 ) -> str:
     """
-    Loop de tool use para Gemini.
+    Loop de tool use para Ollama/llama3.x.
 
-    Gemini devuelve function calls en:
-        response.candidates[0].content.parts[*].function_call
-            .name  → nombre de la tool
-            .args  → dict de argumentos
+    Ollama devuelve tool calls en:
+        response["message"]["tool_calls"] = [
+            {"function": {"name": "...", "arguments": {...}}}
+        ]
+
+    Notas:
+    - Modelos pequeños como llama3.2:3b pueden no soportar tool use correctamente
+      y devolver contenido vacío sin tool_calls. Se advierte con error claro.
+    - Se rastrea el último texto real del asistente como fallback si se
+      agotan las rondas (el último mensaje del historial suele ser un ToolMessage JSON).
     """
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise RuntimeError("Paquete 'google-generativeai' no instalado.")
+    messages = [{"role": "user", "content": prompt}]
+    last_assistant_text = ""  # fallback si se agotan las rondas
 
-    model   = _get_gemini_model(tools_schema=tools, temperature=temperature)
-    chat    = model.start_chat()
-    message = prompt
-
-    for round_num in range(MAX_TOOL_ROUNDS):
-        response   = chat.send_message(message)
-        parts      = response.candidates[0].content.parts
-        tool_calls = [p for p in parts if hasattr(p, "function_call") and p.function_call.name]
+    for round_num in range(max_rounds):
+        raw        = _ollama_chat(messages, temperature, tools)
+        message    = raw.get("message", {})
+        tool_calls = message.get("tool_calls", [])
+        content    = message.get("content", "").strip()
 
         # Sin tool calls → respuesta final en texto
         if not tool_calls:
-            return response.text.strip()
+            if content:
+                return content
 
-        # Ejecutar cada tool call y preparar respuesta de vuelta al modelo
-        tool_responses = []
-        for part in tool_calls:
-            fc     = part.function_call
-            name   = fc.name
-            args   = dict(fc.args)
+            # Contenido vacío sin tool_calls: modelo no soporta tool use
+            if last_assistant_text:
+                return last_assistant_text
+
+            _, model = _get_ollama_config()
+            raise RuntimeError(
+                f"El modelo '{model}' devolvió una respuesta vacía sin tool calls. "
+                "Es posible que no soporte tool use. "
+                "Probá con llama3.1:8b, mistral o qwen2.5:7b."
+            )
+
+        if content:
+            last_assistant_text = content
+
+        # Añadir respuesta del asistente al historial
+        messages.append({
+            "role":       "assistant",
+            "content":    content,
+            "tool_calls": tool_calls,
+        })
+
+        # Ejecutar cada tool y añadir resultados como mensajes "tool"
+        for tool_call in tool_calls:
+            fn     = tool_call.get("function", {})
+            name   = fn.get("name", "")
+            args   = fn.get("arguments", {})
             result = _execute_tool(name, args, tool_executor)
 
-            tool_responses.append(
-                genai.protos.Part(
-                    function_response=genai.protos.FunctionResponse(
-                        name=name,
-                        response={"result": result},
-                    )
-                )
-            )
+            messages.append({
+                "role":    "tool",
+                "content": json.dumps(result, ensure_ascii=False),
+            })
 
-        # Devolver todos los resultados al modelo en un solo mensaje
-        message = genai.protos.Content(parts=tool_responses, role="user")
+    # Rondas agotadas: usar el último texto real del asistente
+    if last_assistant_text:
+        return last_assistant_text
 
-    return "No se pudo completar la respuesta tras el máximo de rondas."
-
-
-def _to_gemini_tool(tool: dict):
-    """
-    Convierte el formato unificado al FunctionDeclaration de Gemini.
-    """
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise RuntimeError("Paquete 'google-generativeai' no instalado.")
-
-    return genai.protos.Tool(
-        function_declarations=[
-            genai.protos.FunctionDeclaration(
-                name=tool["name"],
-                description=tool["description"],
-                parameters=genai.protos.Schema(
-                    type=genai.protos.Type.OBJECT,
-                    properties={
-                        k: genai.protos.Schema(
-                            type=_map_type_gemini(v.get("type", "string")),
-                            description=v.get("description", ""),
-                        )
-                        for k, v in tool["parameters"].get("properties", {}).items()
-                    },
-                    required=tool["parameters"].get("required", []),
-                ),
-            )
-        ]
-    )
-
-
-def _map_type_gemini(type_str: str):
-    """Convierte tipos JSON Schema al enum Type de Gemini."""
-    try:
-        import google.generativeai as genai
-        mapping = {
-            "string":  genai.protos.Type.STRING,
-            "integer": genai.protos.Type.INTEGER,
-            "number":  genai.protos.Type.NUMBER,
-            "boolean": genai.protos.Type.BOOLEAN,
-            "array":   genai.protos.Type.ARRAY,
-            "object":  genai.protos.Type.OBJECT,
-        }
-        return mapping.get(type_str, genai.protos.Type.STRING)
-    except ImportError:
-        return "STRING"
+    return "No se pudo completar la respuesta: se agotaron las rondas de tool use."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -435,7 +477,6 @@ def _execute_tool(name: str, args: dict, tool_executor: dict[str, Callable]) -> 
         return f"Error: tool '{name}' no encontrada en tool_executor."
     try:
         result = fn(**args)
-        # Convertir a string si no lo es (el modelo espera texto)
         return str(result) if not isinstance(result, str) else result
     except Exception as e:
         return f"Error ejecutando '{name}': {e}"

@@ -78,8 +78,8 @@ def validator_agent(state: AcademicState) -> AcademicState:
 
     # Todavía hay reintentos disponibles: señalar para volver al router
     log_event("validator", f"Respuesta vacía. Reintentando ({new_retry_count}/{MAX_RETRIES}).")
+
     return {
-        **state,
         "error": f"Respuesta vacía en campo '{response_field}' (intento {new_retry_count})",
         "retry_count": new_retry_count,
         # Limpiar el campo fallido para que el agente lo regenere desde cero

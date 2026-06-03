@@ -117,8 +117,9 @@ def planner_agent(state: AcademicState) -> AcademicState:
         tool_executor=PLANNER_TOOL_EXECUTOR,
         temperature=0.3,
     )
-
+    print(f"plan: {plan} \n" )  # Debug adicional para verificar parsing
     log_event("planner", "Plan de estudio generado exitosamente")
+
 
     return {
         **state,

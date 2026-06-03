@@ -46,9 +46,8 @@ def router_agent(state: AcademicState) -> AcademicState:
     topics = _parse_topics(response)
 
     log_event("router", f"Intent detectado: {intent} | Topics: {topics}")
-
+    print(f"Intent: {intent}\n, Topics: {topics}" )  # Debug adicional para verificar parsing
     return {
-        **state,
         "intent": intent,
         "topics": topics,
     }
