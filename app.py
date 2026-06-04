@@ -1,530 +1,554 @@
 """
-app.py — Interfaz Streamlit del Asistente Académico
-
-Punto de entrada de la aplicación. Gestiona:
-  - Carga de documentos (txt, md, pdf)
-  - Input del usuario
-  - Invocación del grafo LangGraph
-  - Visualización de respuestas según el intent
-  - Historial de la sesión
+app.py — Interfaz Streamlit del Asistente Académico (Nexus)
+Diseño: chat conversacional dark, tipografía editorial, ícono SVG custom.
 """
 
+import os
+import time
 import streamlit as st
 from state import create_initial_state
 
-# ── Configuración de página ───────────────────────────────────────────────────
+# ── Página ────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Asistente Académico",
-    page_icon="🎓",
+    page_title="Nexus — Asistente Académico",
+    page_icon="🔮",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── CSS personalizado ─────────────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Fuentes */
-    @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=DM+Serif+Display&display=swap');
 
-    html, body, [class*="css"] {
-        font-family: 'Sora', sans-serif;
-    }
+:root {
+    --bg:         #0c0c10;
+    --bg2:        #13131a;
+    --bg3:        #1a1a24;
+    --border:     rgba(255,255,255,0.07);
+    --borderhi:   rgba(99,102,241,0.45);
+    --text:       #e4e4f0;
+    --muted:      #6b6b8a;
+    --dim:        #3a3a55;
+    --accent:     #6366f1;
+    --accent2:    #a78bfa;
+    --accent3:    #38bdf8;
+    --green:      #34d399;
+    --red:        #f87171;
+    --mono:       'IBM Plex Mono', monospace;
+    --sans:       'DM Sans', sans-serif;
+    --serif:      'DM Serif Display', serif;
+}
 
-    /* Fondo general */
-    .stApp {
-        background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
-        min-height: 100vh;
-    }
+html, body, [class*="css"] { font-family: var(--sans); }
 
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background: rgba(255,255,255,0.03);
-        border-right: 1px solid rgba(255,255,255,0.08);
-    }
-    section[data-testid="stSidebar"] .stMarkdown p,
-    section[data-testid="stSidebar"] label {
-        color: #b0b8d4 !important;
-        font-size: 0.85rem;
-    }
+/* Fondo general */
+.stApp {
+    background:
+        radial-gradient(ellipse 70% 50% at 15% 0%, rgba(99,102,241,0.07) 0%, transparent 55%),
+        radial-gradient(ellipse 50% 40% at 85% 100%, rgba(56,189,248,0.05) 0%, transparent 50%),
+        #0c0c10;
+}
 
-    /* Título principal */
-    .main-title {
-        font-size: 2.4rem;
-        font-weight: 700;
-        background: linear-gradient(90deg, #7c83fd, #a78bfa, #60d4f7);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 0.2rem;
-        letter-spacing: -0.5px;
-    }
-    .main-subtitle {
-        color: #6b7280;
-        font-size: 0.95rem;
-        font-weight: 300;
-        margin-bottom: 2rem;
-    }
+/* Ocultar chrome de Streamlit */
+#MainMenu, footer { visibility: hidden; }
 
-    /* Chips de intent */
-    .intent-chip {
-        display: inline-block;
-        padding: 4px 14px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        margin-bottom: 1rem;
-    }
-    .chip-planificar { background: rgba(124,131,253,0.18); color: #7c83fd; border: 1px solid rgba(124,131,253,0.35); }
-    .chip-explicar   { background: rgba(96,212,247,0.18); color: #60d4f7; border: 1px solid rgba(96,212,247,0.35); }
-    .chip-resumir    { background: rgba(52,211,153,0.18); color: #34d399; border: 1px solid rgba(52,211,153,0.35); }
-    .chip-desconocido{ background: rgba(156,163,175,0.18); color: #9ca3af; border: 1px solid rgba(156,163,175,0.35); }
+/* Reducir gaps entre elementos de Streamlit */
+.block-container { padding-top: 0 !important; padding-bottom: 0 !important; }
+div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
+div[data-testid="stVerticalBlockBorderWrapper"] { padding: 0 !important; }
+.element-container { margin-bottom: 0 !important; }
+/* Reducir padding interno del sidebar */
+section[data-testid="stSidebar"] > div:first-child { padding: 1rem 1rem 1rem !important; }
 
-    /* Cards de respuesta */
-    .response-card {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 16px;
-        padding: 1.8rem 2rem;
-        margin-top: 1rem;
-        backdrop-filter: blur(10px);
-    }
+/* ── SIDEBAR ── */
+section[data-testid="stSidebar"] {
+    background: #13131a !important;
+    border-right: 1px solid rgba(255,255,255,0.07) !important;
+}
+section[data-testid="stSidebar"] .stMarkdown h2 {
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 1.05rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.1em !important;
+    color: #e4e4f0 !important;
+    margin-bottom: 0 !important;
+}
+section[data-testid="stSidebar"] .stCaption > p {
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.6rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.18em !important;
+    text-transform: uppercase !important;
+    color: #3a3a55 !important;
+    margin-bottom: 4px !important;
+}
+section[data-testid="stSidebar"] .stMarkdown p {
+    font-size: 0.82rem !important;
+    color: #6b6b8a !important;
+    line-height: 1.55 !important;
+}
+section[data-testid="stSidebar"] .stMarkdown strong {
+    color: #c4c4d8 !important;
+    font-weight: 500 !important;
+}
+section[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.07) !important;
+    margin: 0.75rem 0 !important;
+}
+/* Botón limpiar en sidebar */
+section[data-testid="stSidebar"] .stButton > button {
+    background: #1a1a24 !important;
+    color: #6b6b8a !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 8px !important;
+    font-size: 0.78rem !important;
+    padding: 0.4rem 1rem !important;
+    height: auto !important;
+    min-width: unset !important;
+    width: 100% !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    letter-spacing: 0.03em !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover {
+    border-color: rgba(99,102,241,0.4) !important;
+    color: #e4e4f0 !important;
+    transform: none !important;
+    box-shadow: none !important;
+    background: #1a1a24 !important;
+}
+/* Uploader */
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
+    background: #1a1a24 !important;
+    border: 1px dashed rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+}
+section[data-testid="stSidebar"] .stSuccess > div {
+    background: rgba(52,211,153,0.07) !important;
+    border: 1px solid rgba(52,211,153,0.2) !important;
+    border-radius: 8px !important;
+    color: #34d399 !important;
+    font-size: 0.78rem !important;
+}
+section[data-testid="stSidebar"] .stAlert > div {
+    border-radius: 8px !important;
+    font-size: 0.78rem !important;
+}
 
-    /* Historial items */
-    .history-item {
-        background: rgba(255,255,255,0.03);
-        border-left: 3px solid rgba(124,131,253,0.5);
-        border-radius: 0 8px 8px 0;
-        padding: 0.7rem 1rem;
-        margin-bottom: 0.6rem;
-        font-size: 0.82rem;
-        color: #9ca3af;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    .history-item:hover {
-        background: rgba(124,131,253,0.08);
-        border-left-color: #7c83fd;
-        color: #e2e8f0;
-    }
-    .history-intent {
-        font-size: 0.68rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 2px;
-    }
+/* ── TOPBAR ── */
+.nexus-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1.5rem;
+    background: rgba(12,12,16,0.92);
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    backdrop-filter: blur(12px);
+    margin-bottom: 0;
+}
+.nexus-topbar-left { display: flex; align-items: center; gap: 11px; }
+.nexus-topbar-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #e4e4f0;
+    letter-spacing: 0.04em;
+}
+.nexus-topbar-sub {
+    font-size: 0.72rem;
+    color: #6b6b8a;
+    margin-top: 1px;
+}
+.nexus-topbar-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.63rem;
+    padding: 3px 11px;
+    border-radius: 20px;
+    border: 1px solid rgba(99,102,241,0.35);
+    color: #a78bfa;
+    background: rgba(99,102,241,0.07);
+    letter-spacing: 0.04em;
+}
 
-    /* Input area */
-    .stTextArea textarea {
-        background: rgba(255,255,255,0.05) !important;
-        border: 1px solid rgba(255,255,255,0.12) !important;
-        border-radius: 12px !important;
-        color: #e2e8f0 !important;
-        font-family: 'Sora', sans-serif !important;
-        font-size: 0.95rem !important;
-        resize: vertical !important;
-    }
-    .stTextArea textarea:focus {
-        border-color: rgba(124,131,253,0.5) !important;
-        box-shadow: 0 0 0 2px rgba(124,131,253,0.15) !important;
-    }
+/* ── CHAT BUBBLES ── */
+.msg-user {
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 0.25rem 1.5rem;
+    animation: fadein 0.25s ease-out;
+}
+.msg-bot {
+    display: flex;
+    justify-content: flex-start;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 0.25rem 1.5rem;
+    animation: fadein 0.25s ease-out;
+}
+@keyframes fadein {
+    from { opacity:0; transform: translateY(6px); }
+    to   { opacity:1; transform: translateY(0); }
+}
+.av-user {
+    width:32px; height:32px; border-radius:50%; flex-shrink:0;
+    background: linear-gradient(135deg, #6366f1, #a78bfa);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'IBM Plex Mono',monospace; font-size:0.6rem;
+    font-weight:700; color:#fff; order:2;
+}
+.av-bot {
+    width:32px; height:32px; border-radius:50%; flex-shrink:0;
+    background:#1a1a24; border:1px solid rgba(255,255,255,0.08);
+    display:flex; align-items:center; justify-content:center;
+    font-size:0.9rem;
+}
+.bub-user {
+    max-width:68%;
+    background: linear-gradient(135deg, rgba(99,102,241,0.22), rgba(167,139,250,0.15));
+    border: 1px solid rgba(99,102,241,0.28);
+    border-radius: 16px 16px 4px 16px;
+    padding: 0.75rem 1.1rem;
+    font-size: 0.9rem;
+    color: #e4e4f0;
+    line-height: 1.6;
+}
+.bub-bot {
+    max-width: 74%;
+    background: #13131a;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 16px 16px 16px 4px;
+    padding: 0.9rem 1.2rem;
+    font-size: 0.9rem;
+    color: #e4e4f0;
+    line-height: 1.65;
+}
+.meta-row {
+    display:flex; align-items:center; gap:7px; flex-wrap:wrap;
+    padding: 0.1rem 1.5rem 0.1rem calc(1.5rem + 42px);
+    animation: fadein 0.25s ease-out;
+}
+.ib {
+    font-family:'IBM Plex Mono',monospace; font-size:0.58rem;
+    font-weight:600; letter-spacing:0.08em; text-transform:uppercase;
+    padding:2px 9px; border-radius:20px;
+}
+.ib-planificar { background:rgba(99,102,241,0.12); color:#818cf8; border:1px solid rgba(99,102,241,0.25); }
+.ib-explicar   { background:rgba(56,189,248,0.10);  color:#7dd3fc; border:1px solid rgba(56,189,248,0.25); }
+.ib-resumir    { background:rgba(52,211,153,0.10);  color:#6ee7b7; border:1px solid rgba(52,211,153,0.25); }
+.ib-desconocido{ background:rgba(248,113,113,0.10); color:#fca5a5; border:1px solid rgba(248,113,113,0.25);}
+.topic-chip {
+    font-family:'IBM Plex Mono',monospace; font-size:0.6rem;
+    color:#6b6b8a; background:#1a1a24;
+    border:1px solid rgba(255,255,255,0.07);
+    padding:1px 7px; border-radius:4px;
+}
+.elapsed { font-family:'IBM Plex Mono',monospace; font-size:0.58rem; color:#3a3a55; margin-left:auto; }
 
-    /* Botón principal */
-    .stButton > button {
-        background: linear-gradient(135deg, #7c83fd, #a78bfa) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 10px !important;
-        padding: 0.6rem 1.8rem !important;
-        font-family: 'Sora', sans-serif !important;
-        font-weight: 600 !important;
-        font-size: 0.9rem !important;
-        letter-spacing: 0.3px !important;
-        transition: all 0.2s !important;
-        width: 100% !important;
-    }
-    .stButton > button:hover {
-        transform: translateY(-1px) !important;
-        box-shadow: 0 6px 20px rgba(124,131,253,0.35) !important;
-    }
-    .stButton > button:active {
-        transform: translateY(0) !important;
-    }
+/* ── EMPTY STATE ── */
+.nexus-empty {
+    text-align:center; padding: 2rem 1rem 5rem;
+}
+.nexus-empty-title {
+    font-family:'DM Serif Display',serif;
+    font-size:1.8rem; color:#e4e4f0; margin-bottom:0.5rem;
+}
+.nexus-empty-sub {
+    font-size:0.85rem; color:#6b6b8a; max-width:360px;
+    margin:0 auto 2rem; line-height:1.6;
+}
+.nexus-cards {
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:10px; max-width:520px; margin:0 auto;
+}
+.nexus-card {
+    background:#13131a; border:1px solid rgba(255,255,255,0.07);
+    border-radius:12px; padding:0.9rem 1rem; text-align:left;
+}
+.nexus-card-label {
+    font-family:'IBM Plex Mono',monospace;
+    font-size:0.6rem; font-weight:600;
+    letter-spacing:0.1em; text-transform:uppercase; margin-bottom:4px;
+}
+.nexus-card-text { font-size:0.8rem; color:#6b6b8a; line-height:1.4; }
 
-    /* Botón secundario (limpiar) */
-    .stButton.secondary > button {
-        background: rgba(255,255,255,0.05) !important;
-        color: #9ca3af !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
-    }
+/* ── INPUT FIJO ── */
+.nexus-input-bar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    padding: 0.7rem 1.5rem 0.9rem;
+    background: rgba(12,12,16,0.97);
+    border-top: 1px solid rgba(255,255,255,0.07);
+    backdrop-filter: blur(16px);
+    z-index: 999;
+}
+.nexus-input-inner {
+    max-width: 780px;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+}
 
-    /* File uploader */
-    .stFileUploader {
-        background: rgba(255,255,255,0.03) !important;
-        border: 1px dashed rgba(255,255,255,0.15) !important;
-        border-radius: 12px !important;
-    }
+/* Textarea override */
+.stTextArea textarea {
+    background: #1a1a24 !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 20px !important;
+    color: #e4e4f0 !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 0.88rem !important;
+    padding: 0.6rem 1.1rem !important;
+    resize: none !important;
+    line-height: 1.5 !important;
+    transition: border-color 0.2s !important;
+}
+.stTextArea textarea:focus {
+    border-color: rgba(99,102,241,0.5) !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.08) !important;
+}
+.stTextArea textarea::placeholder { color: #3a3a55 !important; }
+div[data-testid="stTextArea"] { margin-bottom: 0 !important; }
+.stTextArea { margin-bottom: 0 !important; }
 
-    /* Topics tags */
-    .topic-tag {
-        display: inline-block;
-        background: rgba(96,212,247,0.1);
-        color: #60d4f7;
-        border: 1px solid rgba(96,212,247,0.25);
-        border-radius: 6px;
-        padding: 2px 10px;
-        font-size: 0.78rem;
-        font-family: 'JetBrains Mono', monospace;
-        margin: 2px 3px;
-    }
+/* Botón enviar circular (solo en main, no sidebar) */
+.main-area .stButton > button,
+div[data-testid="column"] + div[data-testid="column"] .stButton > button {
+    background: linear-gradient(135deg, #6366f1, #a78bfa) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 50% !important;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    padding: 0 !important;
+    font-size: 1.1rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: transform 0.15s, box-shadow 0.2s !important;
+    flex-shrink: 0 !important;
+}
+.main-area .stButton > button:hover {
+    transform: scale(1.07) !important;
+    box-shadow: 0 0 18px rgba(99,102,241,0.4) !important;
+}
+.main-area .stButton > button:disabled {
+    opacity: 0.25 !important; transform: none !important;
+}
 
-    /* Separador */
-    hr {
-        border: none;
-        border-top: 1px solid rgba(255,255,255,0.07);
-        margin: 1.5rem 0;
-    }
+/* Padding inferior para no quedar tapado por barra fija */
+.main-area { padding-bottom: 90px; }
 
-    /* Texto general */
-    p, li, td, th {
-        color: #cbd5e1;
-    }
-    h1, h2, h3, h4 {
-        color: #e2e8f0;
-    }
+/* Spinner */
+.stSpinner > div { border-top-color: #6366f1 !important; }
 
-    /* Spinner */
-    .stSpinner > div {
-        border-top-color: #7c83fd !important;
-    }
-
-    /* Alertas */
-    .stAlert {
-        background: rgba(239,68,68,0.1) !important;
-        border: 1px solid rgba(239,68,68,0.25) !important;
-        border-radius: 10px !important;
-        color: #fca5a5 !important;
-    }
-
-    /* Selectbox */
-    .stSelectbox > div > div {
-        background: rgba(255,255,255,0.05) !important;
-        border: 1px solid rgba(255,255,255,0.12) !important;
-        border-radius: 10px !important;
-        color: #e2e8f0 !important;
-    }
-
-    /* Scrollbar */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(124,131,253,0.3); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(124,131,253,0.5); }
-
-    /* Ocultar elementos de Streamlit que no necesitamos */
-    #MainMenu, footer { visibility: hidden; }
-    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3a3a55; border-radius: 2px; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── SVG ───────────────────────────────────────────────────────────────────────
+ICON_SM = '<svg width="30" height="30" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="15" fill="none" stroke="#6366f1" stroke-width="4.5"/><circle cx="50" cy="50" r="6" fill="#6366f1"/><circle cx="50" cy="14" r="7" fill="#6366f1"/><circle cx="50" cy="86" r="7" fill="#6366f1"/><circle cx="14" cy="50" r="7" fill="#a78bfa"/><circle cx="86" cy="50" r="7" fill="#a78bfa"/><circle cx="22" cy="22" r="5" fill="#38bdf8" opacity=".75"/><circle cx="78" cy="78" r="5" fill="#38bdf8" opacity=".75"/><line x1="50" y1="21" x2="50" y2="35" stroke="#6366f1" stroke-width="3" stroke-linecap="round"/><line x1="50" y1="65" x2="50" y2="79" stroke="#6366f1" stroke-width="3" stroke-linecap="round"/><line x1="21" y1="50" x2="35" y2="50" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/><line x1="65" y1="50" x2="79" y2="50" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/><line x1="26" y1="26" x2="36" y2="36" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity=".7"/><line x1="64" y1="64" x2="74" y2="74" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity=".7"/></svg>'
 
-# ── Estado de sesión ──────────────────────────────────────────────────────────
+ICON_LG = '<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="15" fill="none" stroke="#6366f1" stroke-width="4.5"/><circle cx="50" cy="50" r="6" fill="#6366f1"/><circle cx="50" cy="14" r="7" fill="#6366f1"/><circle cx="50" cy="86" r="7" fill="#6366f1"/><circle cx="14" cy="50" r="7" fill="#a78bfa"/><circle cx="86" cy="50" r="7" fill="#a78bfa"/><circle cx="22" cy="22" r="5" fill="#38bdf8" opacity=".75"/><circle cx="78" cy="78" r="5" fill="#38bdf8" opacity=".75"/><line x1="50" y1="21" x2="50" y2="35" stroke="#6366f1" stroke-width="3" stroke-linecap="round"/><line x1="50" y1="65" x2="50" y2="79" stroke="#6366f1" stroke-width="3" stroke-linecap="round"/><line x1="21" y1="50" x2="35" y2="50" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/><line x1="65" y1="50" x2="79" y2="50" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/><line x1="26" y1="26" x2="36" y2="36" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity=".7"/><line x1="64" y1="64" x2="74" y2="74" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity=".7"/></svg>'
 
-def init_session_state():
-    """Inicializa todas las variables de sesión si no existen."""
-    defaults = {
-        "history":       [],      # Lista de dicts {input, intent, topics, response}
-        "last_result":   None,    # Último estado del grafo
-        "graph":         None,    # Grafo LangGraph compilado (cacheado)
-        "graph_error":   None,    # Error al compilar el grafo
-    }
-    for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
+# ── Session state ─────────────────────────────────────────────────────────────
+def init():
+    for k, v in {"messages": [], "graph": None, "graph_error": None}.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+init()
 
-init_session_state()
-
-
-# ── Carga del grafo (con caché) ───────────────────────────────────────────────
-
+# ── Grafo ─────────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def load_graph():
-    """
-    Compila el grafo LangGraph una sola vez y lo cachea en sesión.
-    @st.cache_resource persiste entre reruns del mismo usuario.
-    """
     from workflow import build_graph
     return build_graph()
 
-# Intentar cargar el grafo al iniciar
 if st.session_state["graph"] is None and st.session_state["graph_error"] is None:
     try:
         st.session_state["graph"] = load_graph()
     except Exception as e:
         st.session_state["graph_error"] = str(e)
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def read_uploaded_file(uploaded_file) -> str:
-    """
-    Lee el contenido de un archivo subido por el usuario.
-    Soporta .txt, .md y .pdf (si pypdf está instalado).
-    """
-    if uploaded_file is None:
+def read_file(f) -> str:
+    if not f:
         return ""
-
-    name = uploaded_file.name.lower()
-
+    name = f.name.lower()
     if name.endswith((".txt", ".md")):
-        return uploaded_file.read().decode("utf-8", errors="replace")
-
+        return f.read().decode("utf-8", errors="replace")
     if name.endswith(".pdf"):
         try:
             from pypdf import PdfReader
             import io
-            reader = PdfReader(io.BytesIO(uploaded_file.read()))
-            pages  = [p.extract_text() or "" for p in reader.pages]
-            return "\n\n".join(pages)
-        except ImportError:
-            st.warning("Para leer PDFs instalá pypdf: `pip install pypdf`")
+            return "\n\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(f.read())).pages)
+        except Exception:
             return ""
-        except Exception as e:
-            st.warning(f"No se pudo leer el PDF: {e}")
-            return ""
-
     return ""
 
+def run_graph(user_input: str, doc: str = "") -> dict:
+    g = st.session_state["graph"]
+    if not g:
+        raise RuntimeError("Grafo no disponible.")
+    return g.invoke(create_initial_state(user_input=user_input, document_text=doc or None))
 
-def intent_chip_html(intent: str) -> str:
-    """Genera el HTML del chip de intent coloreado."""
-    labels = {
-        "planificar": "📅 Planificar",
-        "explicar":   "💡 Explicar",
-        "resumir":    "📝 Resumir",
-        "desconocido":"❓ Sin clasificar",
-    }
-    label = labels.get(intent, intent)
-    return f'<span class="intent-chip chip-{intent}">{label}</span>'
+def ic(intent):
+    return {"planificar":"#818cf8","explicar":"#7dd3fc","resumir":"#6ee7b7"}.get(intent,"#fca5a5")
 
-
-def topics_html(topics: list) -> str:
-    """Genera los tags HTML de los topics detectados."""
-    if not topics:
-        return ""
-    tags = "".join(f'<span class="topic-tag">{t}</span>' for t in topics)
-    return f'<div style="margin-bottom:1rem;">{tags}</div>'
-
-
-def run_graph(user_input: str, document_text: str = "") -> dict:
-    """
-    Ejecuta el grafo LangGraph con el input del usuario.
-
-    Args:
-        user_input:    Mensaje del usuario
-        document_text: Texto de documento subido (vacío si no hay)
-
-    Returns:
-        Estado final del grafo como dict
-    """
-    graph = st.session_state["graph"]
-    if graph is None:
-        raise RuntimeError("El grafo no está disponible.")
-
-    initial_state = create_initial_state(
-        user_input=user_input,
-        document_text=document_text if document_text else None,
-    )
-    return graph.invoke(initial_state)
-
-
-# ── Layout: Sidebar ───────────────────────────────────────────────────────────
-
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🎓 Asistente Académico")
-    st.markdown("---")
+    st.markdown(f'<div style="display:flex;align-items:center;gap:9px;padding:0.2rem 0 0.8rem;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:0.8rem;">{ICON_SM}<span style="font-family:IBM Plex Mono,monospace;font-size:1.05rem;font-weight:700;letter-spacing:0.1em;color:#e4e4f0;">NEX<span style="color:#6366f1;">US</span></span></div>', unsafe_allow_html=True)
 
-    # Estado del sistema
+    st.caption("SISTEMA")
     if st.session_state["graph_error"]:
-        st.error(f"⚠️ Error al cargar el grafo:\n\n{st.session_state['graph_error']}")
+        st.error("⚠ Error al iniciar")
+        with st.expander("Ver detalle"):
+            st.code(st.session_state["graph_error"])
     else:
-        st.success("✅ Sistema listo")
+        st.success("● Sistema listo")
 
-    st.markdown("---")
-
-    # Carga de documento
-    st.markdown("### 📄 Documento (opcional)")
-    st.caption("Subí un archivo para que el resumidor lo use como base.")
+    st.divider()
+    st.caption("DOCUMENTO")
+    st.write("Subí un archivo como base de conocimiento.")
     uploaded_file = st.file_uploader(
-        label="Subir archivo",
-        type=["txt", "md", "pdf"],
-        label_visibility="collapsed",
+        "archivo", type=["txt","md","pdf"], label_visibility="collapsed"
     )
-    document_text = read_uploaded_file(uploaded_file) if uploaded_file else ""
+    document_text = read_file(uploaded_file) if uploaded_file else ""
     if document_text:
-        st.success(f"✅ {uploaded_file.name} cargado ({len(document_text):,} caracteres)")
+        st.success(f"✓ {uploaded_file.name} · {len(document_text):,} chars")
 
-    st.markdown("---")
+    st.divider()
+    st.caption("QUÉ PODÉS PEDIRME")
+    st.write("📅 **Planificar** — cronograma semanal de estudio")
+    st.write("💡 **Explicar** — conceptos con ejemplos y analogías")
+    st.write("📝 **Resumir** — sintetizá temas o documentos")
 
-    # Instrucciones rápidas
-    st.markdown("### ℹ️ ¿Qué puedo hacer?")
-    st.markdown("""
-<div style="color:#9ca3af; font-size:0.82rem; line-height:1.7;">
-📅 <b style="color:#7c83fd;">Planificar</b><br>
-<i>"Quiero estudiar cálculo en 2 semanas"</i><br><br>
-💡 <b style="color:#60d4f7;">Explicar</b><br>
-<i>"¿Qué es una derivada?"</i><br><br>
-📝 <b style="color:#34d399;">Resumir</b><br>
-<i>"Resume el tema de estadística"</i>
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Historial
-    if st.session_state["history"]:
-        st.markdown("### 🕘 Historial")
-        for i, item in enumerate(reversed(st.session_state["history"][-8:])):
-            intent = item.get("intent", "desconocido")
-            color_map = {
-                "planificar": "#7c83fd",
-                "explicar":   "#60d4f7",
-                "resumir":    "#34d399",
-                "desconocido":"#9ca3af",
-            }
-            color = color_map.get(intent, "#9ca3af")
-            preview = item["input"][:55] + "…" if len(item["input"]) > 55 else item["input"]
-            st.markdown(f"""
-<div class="history-item">
-    <div class="history-intent" style="color:{color};">{intent.upper()}</div>
-    {preview}
-</div>
-""", unsafe_allow_html=True)
-
-        if st.button("🗑️ Limpiar historial", key="clear_history"):
-            st.session_state["history"] = []
-            st.session_state["last_result"] = None
+    if st.session_state["messages"]:
+        st.divider()
+        st.caption("HISTORIAL")
+        user_msgs = [m for m in st.session_state["messages"] if m["role"] == "user"]
+        for msg in reversed(user_msgs[-5:]):
+            intent  = msg.get("intent", "—")
+            preview = msg["content"][:48] + "…" if len(msg["content"]) > 48 else msg["content"]
+            color   = ic(intent)
+            st.markdown(f'<span style="font-family:monospace;font-size:0.65rem;color:{color};font-weight:600;">{intent.upper()}</span> <span style="font-size:0.78rem;color:#6b6b8a;">{preview}</span>', unsafe_allow_html=True)
+        st.write("")
+        if st.button("↺ Limpiar conversación", key="clear", use_container_width=True):
+            st.session_state["messages"] = []
             st.rerun()
 
+# ── MAIN ──────────────────────────────────────────────────────────────────────
+provider = "Gemini" if os.getenv("GEMINI_API_KEY") else "Ollama"
+model    = os.getenv("GEMINI_MODEL", os.getenv("DEFAULT_MODEL", "local"))
 
-# ── Layout: Main ─────────────────────────────────────────────────────────────
-
-st.markdown('<div class="main-title">Asistente Académico</div>', unsafe_allow_html=True)
-st.markdown('<div class="main-subtitle">Planificá tu estudio, entendé conceptos, generá resúmenes.</div>', unsafe_allow_html=True)
-
-# Área de input
-user_input = st.text_area(
-    label="Pregunta o solicitud",
-    placeholder="Ej: Explicame qué es una integral definida y para qué sirve...",
-    height=120,
-    label_visibility="collapsed",
-    key="user_input_area",
+st.markdown(
+    f'<div class="nexus-topbar">'
+    f'<div class="nexus-topbar-left">{ICON_SM}'
+    f'<div><div class="nexus-topbar-title">Nexus — Asistente Académico</div>'
+    f'<div class="nexus-topbar-sub">Planificá · Aprendé · Resumí</div></div></div>'
+    f'<div class="nexus-topbar-badge">{provider} · {model}</div>'
+    f'</div>',
+    unsafe_allow_html=True,
 )
 
-col_send, col_clear = st.columns([4, 1])
+# ── Chat ──────────────────────────────────────────────────────────────────────
+st.markdown('<div class="main-area">', unsafe_allow_html=True)
 
-with col_send:
-    send_clicked = st.button("✨ Consultar", key="send_btn", disabled=not user_input.strip())
+if not st.session_state["messages"]:
+    st.markdown(
+        f'<div class="nexus-empty">'
+        f'{ICON_LG}'
+        f'<div class="nexus-empty-title">¿En qué te ayudo hoy?</div>'
+        f'<div class="nexus-empty-sub">Soy tu asistente académico. Planificá tu estudio, aprendé conceptos y generá resúmenes.</div>'
+        f'<div class="nexus-cards">'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#818cf8;">📅 Planificar</div><div class="nexus-card-text">"Quiero estudiar álgebra lineal en dos semanas"</div></div>'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#7dd3fc;">💡 Explicar</div><div class="nexus-card-text">"Explicame qué es una integral definida"</div></div>'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#6ee7b7;">📝 Resumir</div><div class="nexus-card-text">"Resumí el tema de distribuciones de probabilidad"</div></div>'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#a78bfa;">📄 Documento</div><div class="nexus-card-text">Subí un PDF o TXT y pedí que lo resuma</div></div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+else:
+    for msg in st.session_state["messages"]:
+        if msg["role"] == "user":
+            st.markdown(
+                f'<div class="msg-user">'
+                f'<div class="bub-user">{msg["content"]}</div>'
+                f'<div class="av-user">TÚ</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            intent  = msg.get("intent", "desconocido")
+            topics  = msg.get("topics") or []
+            elapsed = msg.get("elapsed", 0)
+            chips   = "".join(f'<span class="topic-chip">{t}</span>' for t in topics[:4])
+            st.markdown(
+                f'<div class="meta-row">'
+                f'<span class="ib ib-{intent}">▸ {intent}</span>'
+                f'{chips}'
+                f'<span class="elapsed">{elapsed:.1f}s</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div class="msg-bot"><div class="av-bot">◈</div><div class="bub-bot">',
+                unsafe_allow_html=True,
+            )
+            st.markdown(msg["content"])
+            st.markdown("</div></div>", unsafe_allow_html=True)
 
-with col_clear:
-    if st.button("↺", key="clear_btn", help="Limpiar resultado"):
-        st.session_state["last_result"] = None
-        st.rerun()
+st.markdown("</div>", unsafe_allow_html=True)  # cierre main-area
 
-# ── Ejecución del grafo ───────────────────────────────────────────────────────
+# ── Input fijo ────────────────────────────────────────────────────────────────
+st.markdown('<div class="nexus-input-bar"><div class="nexus-input-inner">', unsafe_allow_html=True)
 
-if send_clicked and user_input.strip():
-    if st.session_state["graph_error"]:
-        st.error("El grafo no está disponible. Revisá la configuración.")
-    else:
-        with st.spinner("Procesando tu consulta…"):
-            try:
-                result = run_graph(user_input.strip(), document_text)
-                st.session_state["last_result"] = result
+col_txt, col_btn = st.columns([14, 1])
+with col_txt:
+    user_input = st.text_area(
+        "msg", placeholder="Escribí tu consulta aquí…",
+        height=52, label_visibility="collapsed", key="chat_input",
+    )
+with col_btn:
+    send = st.button(
+        "↑", key="send_btn",
+        disabled=not (user_input or "").strip() or bool(st.session_state["graph_error"]),
+        help="Enviar",
+    )
 
-                # Guardar en historial
-                st.session_state["history"].append({
-                    "input":    user_input.strip(),
-                    "intent":   result.get("intent", "desconocido"),
-                    "topics":   result.get("topics") or [],
-                    "response": result.get("final_response", ""),
-                })
+st.markdown("</div></div>", unsafe_allow_html=True)
 
-            except Exception as e:
-                st.error(f"**Error al procesar la consulta:**\n\n{e}")
-
-# ── Mostrar resultado ─────────────────────────────────────────────────────────
-
-result = st.session_state.get("last_result")
-
-if result:
-    intent   = result.get("intent", "desconocido")
-    topics   = result.get("topics") or []
-    response = result.get("final_response", "")
-    error    = result.get("error")
-    retries  = result.get("retry_count", 0)
-
-    # Chip de intent + topics
-    st.markdown(intent_chip_html(intent), unsafe_allow_html=True)
-    if topics:
-        st.markdown(topics_html(topics), unsafe_allow_html=True)
-
-    # Advertencia si hubo reintentos
-    if retries > 0 and not error:
-        st.info(f"ℹ️ Se necesitaron {retries} reintento(s) para generar la respuesta.")
-
-    # Card de respuesta
-    st.markdown('<div class="response-card">', unsafe_allow_html=True)
-    if response:
-        st.markdown(response)
-    else:
-        st.warning("No se obtuvo una respuesta. Intentá reformular tu consulta.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Detalle de debug (expandible, no visible por defecto)
-    with st.expander("🔍 Detalle técnico", expanded=False):
-        debug_cols = st.columns(3)
-        debug_cols[0].metric("Intent", intent)
-        debug_cols[1].metric("Reintentos", retries)
-        debug_cols[2].metric("Topics", len(topics))
-
-        if topics:
-            st.markdown("**Topics detectados:** " + ", ".join(f"`{t}`" for t in topics))
-
-        if error:
-            st.error(f"Último error registrado: {error}")
-
-        # Campos intermedios del estado (útil para debugging del grafo)
-        st.markdown("**Estado completo del grafo:**")
-        state_preview = {
-            "intent":        result.get("intent"),
-            "topics":        result.get("topics"),
-            "retry_count":   result.get("retry_count"),
-            "error":         result.get("error"),
-            "has_plan":      bool(result.get("plan")),
-            "has_explanation": bool(result.get("explanation")),
-            "has_summary":   bool(result.get("summary")),
-        }
-        st.json(state_preview)
-
-# ── Estado vacío (sin consultas aún) ─────────────────────────────────────────
-
-elif not result:
-    st.markdown("""
-<div style="
-    text-align: center;
-    padding: 3rem 2rem;
-    color: #4b5563;
-">
-    <div style="font-size: 3rem; margin-bottom: 1rem;">🎓</div>
-    <div style="font-size: 1.1rem; font-weight: 600; color: #6b7280; margin-bottom: 0.5rem;">
-        Escribí tu consulta arriba para comenzar
-    </div>
-    <div style="font-size: 0.85rem; line-height: 1.8;">
-        Podés pedirme que te <b style="color:#7c83fd">planifique un estudio</b>,
-        te <b style="color:#60d4f7">explique un concepto</b>
-        o te <b style="color:#34d399">resuma un tema</b>.
-    </div>
-</div>
-""", unsafe_allow_html=True)
+# ── Procesar ──────────────────────────────────────────────────────────────────
+if send and (user_input or "").strip():
+    st.session_state["messages"].append({
+        "role": "user", "content": user_input.strip(),
+        "intent": None, "topics": [], "elapsed": 0, "error": None,
+    })
+    with st.spinner("Procesando…"):
+        t0 = time.time()
+        try:
+            result  = run_graph(user_input.strip(), document_text)
+            elapsed = time.time() - t0
+            st.session_state["messages"].append({
+                "role":    "assistant",
+                "content": result.get("final_response") or "_Sin respuesta. Intentá reformular._",
+                "intent":  result.get("intent", "desconocido"),
+                "topics":  result.get("topics") or [],
+                "elapsed": elapsed,
+                "error":   result.get("error"),
+            })
+            st.session_state["messages"][-2]["intent"] = result.get("intent", "desconocido")
+        except Exception as e:
+            elapsed = time.time() - t0
+            st.session_state["messages"].append({
+                "role": "assistant",
+                "content": f"**Error:** `{e}`",
+                "intent": "desconocido", "topics": [],
+                "elapsed": elapsed, "error": str(e),
+            })
+    st.rerun()
