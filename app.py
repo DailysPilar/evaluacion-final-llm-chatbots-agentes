@@ -333,17 +333,19 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 }
 .nexus-card-text { font-size:0.8rem; color:#6b6b8a; line-height:1.4; }
 
-/* ── COMPOSITOR FIJO Y CENTRADO ── */
+/* ── COMPOSITOR FOOTER ── */
 .st-key-nexus_input_bar {
-    position: fixed;
+    position: sticky;
     bottom: 0;
-    left: 0;
-    right: 0;
-    background: rgba(12,12,16,0.98);
+    width: auto;
+    margin: 1rem -1rem 0;
+    background:
+        linear-gradient(180deg, rgba(12,12,16,0.76), rgba(12,12,16,0.98) 28%),
+        #0c0c10;
     border-top: 1px solid rgba(255,255,255,0.06);
     backdrop-filter: blur(18px);
-    z-index: 999;
-    padding: 0.9rem 2rem;
+    z-index: 90;
+    padding: 0.9rem clamp(1rem, 3vw, 2rem);
 }
 
 .st-key-nexus_input_bar > div {
@@ -467,9 +469,22 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 }
 
 
-/* Espaciado adicional para el último mensaje */
+/* El footer vive en el flujo: deja aire sin tapar el último mensaje. */
+.main-area {
+    padding-bottom: 1.25rem;
+}
 .main-area > div:last-child {
-    margin-bottom: 20px;
+    margin-bottom: 0;
+}
+
+@media (max-width: 780px) {
+    .st-key-nexus_input_bar {
+        margin-inline: -1rem;
+        padding-inline: 1rem;
+    }
+    .st-key-nexus_input_bar div[data-testid="stHorizontalBlock"] {
+        gap: 0.5rem;
+    }
 }
 
 /* Scrollbar */
