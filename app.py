@@ -41,6 +41,13 @@ st.markdown("""
     --mono:       'IBM Plex Mono', monospace;
     --sans:       'DM Sans', sans-serif;
     --serif:      'DM Serif Display', serif;
+
+    /*
+     * Ancho del sidebar de Streamlit.
+     * Streamlit lo fija en ~21rem cuando está expandido.
+     * Se usa en el footer fijo para que arranque justo donde termina el sidebar.
+     */
+    --sidebar-width: 21rem;
 }
 
 html, body, [class*="css"] { font-family: var(--sans); }
@@ -59,7 +66,9 @@ html, body, [class*="css"] { font-family: var(--sans); }
 /* Quitar padding/max-width del bloque principal para ocupar todo el ancho */
 .block-container {
     padding-top: 3.35rem !important;
-    padding-bottom: 0 !important;
+    /* El footer fijo mide ~80px; dejamos ese espacio para que el último
+       mensaje no quede tapado al llegar al final del scroll. */
+    padding-bottom: 100px !important;
     padding-left: 1rem !important;
     padding-right: 1rem !important;
     max-width: 100% !important;
@@ -333,11 +342,22 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 }
 .nexus-card-text { font-size:0.8rem; color:#6b6b8a; line-height:1.4; }
 
-/* ── COMPOSITOR FOOTER ── */
+/* ═══════════════════════════════════════════════════════════════
+   COMPOSITOR FOOTER — FIXED AL FONDO DE LA VENTANA
+   ═══════════════════════════════════════════════════════════════
+   Se usa position: fixed en lugar de sticky para que el footer
+   permanezca siempre visible independientemente del scroll.
+
+   left: var(--sidebar-width) → arranca justo donde termina el sidebar
+   right: 0                   → llega hasta el borde derecho de la pantalla
+
+   El JS de abajo ajusta --sidebar-width dinámicamente para cubrir
+   los estados expandido/colapsado del sidebar de Streamlit.
+   ═══════════════════════════════════════════════════════════════ */
 .st-key-nexus_input_bar {
-    position: sticky;
-    bottom: 0;
-    width: auto;
+    position: fixed !important;
+    bottom: 0 !important;
+    right: 0 !important;
     margin: 1rem -1rem 0;
     background:
         linear-gradient(180deg, rgba(12,12,16,0.76), rgba(12,12,16,0.98) 28%),
@@ -346,6 +366,7 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     backdrop-filter: blur(18px);
     z-index: 90;
     padding: 0.9rem clamp(1rem, 3vw, 2rem);
+    box-sizing: border-box;
 }
 
 .st-key-nexus_input_bar > div {
@@ -468,8 +489,8 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     align-items: center;
 }
 
-
-/* El footer vive en el flujo: deja aire sin tapar el último mensaje. */
+/* El area de chat necesita padding inferior para que el último mensaje
+   no quede tapado por el footer fijo (~80px de alto + margen). */
 .main-area {
     padding-bottom: 1.25rem;
 }
@@ -477,6 +498,9 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     margin-bottom: 0;
 }
 
+/* ── RESPONSIVE: sidebar colapsado ──
+   Cuando el sidebar está colapsado Streamlit lo reduce a ~4rem.
+   La clase data-collapsed="true" se detecta con JS y ajusta la variable. */
 @media (max-width: 780px) {
     .st-key-nexus_input_bar {
         margin-inline: -1rem;
@@ -494,17 +518,82 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 </style>
 
 <script>
-// JavaScript para enviar mensaje con Ctrl+Enter
+// ─────────────────────────────────────────────────────────────────────────────
+// FOOTER LEFT TRACKING — basado en aria-expanded del sidebar de Streamlit
+//
+// Streamlit pone aria-expanded="true/false" en el botón de colapsar sidebar.
+// Cuando está expandido el sidebar mide exactamente 336px (valor hardcodeado
+// en el CSS de Streamlit). Cuando está colapsado mide 0.
+// Usamos ese atributo en lugar de medir píxeles para evitar saltos durante
+// la transición CSS del sidebar.
+// ─────────────────────────────────────────────────────────────────────────────
+(function() {
+    var SIDEBAR_OPEN_W  = '336px';
+    var SIDEBAR_CLOSE_W = '0px';
+
+    function getSidebarExpanded() {
+        // Streamlit ≥ 1.x: el botón colapsar tiene data-testid="collapsedControl"
+        // y aria-expanded refleja si el sidebar está abierto.
+        var btn = document.querySelector('[data-testid="collapsedControl"]');
+        if (btn) {
+            // aria-expanded="true"  → sidebar VISIBLE   → footer arranca en 336px
+            // aria-expanded="false" → sidebar COLAPSADO → footer arranca en 0
+            return btn.getAttribute('aria-expanded') !== 'false';
+        }
+        // Fallback: si no encontramos el botón asumimos expandido
+        return true;
+    }
+
+    function applyWidth() {
+        var w = getSidebarExpanded() ? SIDEBAR_OPEN_W : SIDEBAR_CLOSE_W;
+        document.documentElement.style.setProperty('--sidebar-width', w);
+    }
+
+    // Aplicar en cuanto el DOM esté listo
+    applyWidth();
+    setTimeout(applyWidth, 200);   // por si Streamlit tarda en pintar el botón
+
+    // Observar cambios de atributo en el botón (clic expandir/colapsar)
+    var mo = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+            if (mutations[i].type === 'attributes' &&
+                mutations[i].attributeName === 'aria-expanded') {
+                applyWidth();
+                return;
+            }
+        }
+    });
+
+    function attachObserver() {
+        var btn = document.querySelector('[data-testid="collapsedControl"]');
+        if (btn && !btn.__nexusObserved) {
+            btn.__nexusObserved = true;
+            mo.observe(btn, { attributes: true, attributeFilter: ['aria-expanded'] });
+        }
+    }
+
+    attachObserver();
+
+    // Si el botón aparece después del primer render (Streamlit a veces lo inyecta tarde)
+    var bodyObs = new MutationObserver(function() {
+        attachObserver();
+        applyWidth();
+    });
+    bodyObs.observe(document.body, { childList: true, subtree: false });
+})();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CTRL+ENTER para enviar mensaje
+// ─────────────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
-    // Función para configurar el event listener en el textarea
     function setupCtrlEnter() {
-        const textarea = document.querySelector('.st-key-nexus_input_bar textarea');
+        var textarea = document.querySelector('.st-key-nexus_input_bar textarea');
         if (textarea && !textarea.hasAttribute('data-ctrl-enter-listener')) {
             textarea.setAttribute('data-ctrl-enter-listener', 'true');
             textarea.addEventListener('keydown', function(e) {
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                     e.preventDefault();
-                    const sendButton = document.querySelector('.st-key-nexus_input_bar .stButton button');
+                    var sendButton = document.querySelector('.st-key-nexus_input_bar .stButton button');
                     if (sendButton && !sendButton.disabled) {
                         sendButton.click();
                     }
@@ -512,14 +601,12 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     }
-    
-    // Intentar configurar inmediatamente y después de un breve delay
+
     setupCtrlEnter();
     setTimeout(setupCtrlEnter, 500);
     setTimeout(setupCtrlEnter, 1000);
-    
-    // Usar MutationObserver para detectar cambios en el DOM
-    const observer = new MutationObserver(function(mutations) {
+
+    var observer = new MutationObserver(function() {
         setupCtrlEnter();
     });
     observer.observe(document.body, { childList: true, subtree: true });
