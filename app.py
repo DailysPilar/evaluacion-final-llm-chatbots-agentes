@@ -3,8 +3,10 @@ app.py — Interfaz Streamlit del Asistente Académico (Nexus)
 Diseño: chat conversacional dark, tipografía editorial, ícono SVG custom.
 """
 
+import html
 import os
 import time
+import mistune
 import streamlit as st
 from state import create_initial_state
 
@@ -20,6 +22,7 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=DM+Serif+Display&display=swap');
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css');
 
 :root {
     --bg:         #0c0c10;
@@ -53,11 +56,18 @@ html, body, [class*="css"] { font-family: var(--sans); }
 /* Ocultar chrome de Streamlit */
 #MainMenu, footer { visibility: hidden; }
 
-/* Reducir gaps entre elementos de Streamlit */
-.block-container { padding-top: 0 !important; padding-bottom: 0 !important; }
+/* Quitar padding/max-width del bloque principal para ocupar todo el ancho */
+.block-container {
+    padding-top: 3.35rem !important;
+    padding-bottom: 0 !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    max-width: 100% !important;
+}
 div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
 div[data-testid="stVerticalBlockBorderWrapper"] { padding: 0 !important; }
 .element-container { margin-bottom: 0 !important; }
+
 /* Reducir padding interno del sidebar */
 section[data-testid="stSidebar"] > div:first-child { padding: 1rem 1rem 1rem !important; }
 
@@ -117,34 +127,22 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     box-shadow: none !important;
     background: #1a1a24 !important;
 }
-/* Uploader */
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
-    background: #1a1a24 !important;
-    border: 1px dashed rgba(255,255,255,0.1) !important;
-    border-radius: 10px !important;
-}
-section[data-testid="stSidebar"] .stSuccess > div {
-    background: rgba(52,211,153,0.07) !important;
-    border: 1px solid rgba(52,211,153,0.2) !important;
-    border-radius: 8px !important;
-    color: #34d399 !important;
-    font-size: 0.78rem !important;
-}
-section[data-testid="stSidebar"] .stAlert > div {
-    border-radius: 8px !important;
-    font-size: 0.78rem !important;
-}
 
 /* ── TOPBAR ── */
 .nexus-topbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.6rem 1.5rem;
-    background: rgba(12,12,16,0.92);
+    padding: 0.55rem 1.5rem;
+    background: rgba(12,12,16,0.94);
     border-bottom: 1px solid rgba(255,255,255,0.07);
     backdrop-filter: blur(12px);
-    margin-bottom: 0;
+    position: sticky;
+    top: 3.1rem;
+    z-index: 100;
+    margin-left: -1rem;
+    margin-right: -1rem;
+    margin-bottom: 1rem;
 }
 .nexus-topbar-left { display: flex; align-items: center; gap: 11px; }
 .nexus-topbar-title {
@@ -224,27 +222,89 @@ section[data-testid="stSidebar"] .stAlert > div {
     color: #e4e4f0;
     line-height: 1.65;
 }
-.meta-row {
-    display:flex; align-items:center; gap:7px; flex-wrap:wrap;
-    padding: 0.1rem 1.5rem 0.1rem calc(1.5rem + 42px);
-    animation: fadein 0.25s ease-out;
+.bub-user,
+.bub-bot {
+    overflow-wrap: anywhere;
 }
-.ib {
-    font-family:'IBM Plex Mono',monospace; font-size:0.58rem;
-    font-weight:600; letter-spacing:0.08em; text-transform:uppercase;
-    padding:2px 9px; border-radius:20px;
+.message-content p { margin: 0 0 0.65rem; }
+.message-content p:last-child,
+.message-content ul:last-child,
+.message-content ol:last-child,
+.message-content pre:last-child { margin-bottom: 0; }
+.message-content ul,
+.message-content ol {
+    margin: 0.35rem 0 0.8rem;
+    padding-left: 1.1rem;
 }
-.ib-planificar { background:rgba(99,102,241,0.12); color:#818cf8; border:1px solid rgba(99,102,241,0.25); }
-.ib-explicar   { background:rgba(56,189,248,0.10);  color:#7dd3fc; border:1px solid rgba(56,189,248,0.25); }
-.ib-resumir    { background:rgba(52,211,153,0.10);  color:#6ee7b7; border:1px solid rgba(52,211,153,0.25); }
-.ib-desconocido{ background:rgba(248,113,113,0.10); color:#fca5a5; border:1px solid rgba(248,113,113,0.25);}
-.topic-chip {
-    font-family:'IBM Plex Mono',monospace; font-size:0.6rem;
-    color:#6b6b8a; background:#1a1a24;
-    border:1px solid rgba(255,255,255,0.07);
-    padding:1px 7px; border-radius:4px;
+.message-content li { margin: 0.2rem 0; }
+.message-content code {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: #c4c4d8;
+    background: rgba(255,255,255,0.055);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 5px;
+    padding: 0.08rem 0.25rem;
 }
-.elapsed { font-family:'IBM Plex Mono',monospace; font-size:0.58rem; color:#3a3a55; margin-left:auto; }
+.message-content pre {
+    overflow-x: auto;
+    margin: 0.55rem 0 0.85rem;
+    padding: 0.75rem 0.9rem;
+    background: #0c0c10;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px;
+}
+.message-content pre code {
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+.typing-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: #a9a9c4;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.typing-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.typing-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #a78bfa;
+    animation: typingPulse 1.15s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.16s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.32s; }
+@keyframes typingPulse {
+    0%, 80%, 100% { opacity: 0.28; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-3px); }
+}
+/* ── FILE BADGE (archivo adjunto seleccionado) ── */
+.file-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99,102,241,0.12);
+    border: 1px solid rgba(99,102,241,0.3);
+    border-radius: 20px;
+    padding: 3px 10px 3px 8px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: #a78bfa;
+    max-width: 220px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.file-badge svg { flex-shrink: 0; }
 
 /* ── EMPTY STATE ── */
 .nexus-empty {
@@ -273,82 +333,183 @@ section[data-testid="stSidebar"] .stAlert > div {
 }
 .nexus-card-text { font-size:0.8rem; color:#6b6b8a; line-height:1.4; }
 
-/* ── INPUT FIJO ── */
-.nexus-input-bar {
+/* ── COMPOSITOR FIJO Y CENTRADO ── */
+.st-key-nexus_input_bar {
     position: fixed;
-    bottom: 0; left: 0; right: 0;
-    padding: 0.7rem 1.5rem 0.9rem;
-    background: rgba(12,12,16,0.97);
-    border-top: 1px solid rgba(255,255,255,0.07);
-    backdrop-filter: blur(16px);
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(12,12,16,0.98);
+    border-top: 1px solid rgba(255,255,255,0.06);
+    backdrop-filter: blur(18px);
     z-index: 999;
+    padding: 0.9rem 2rem;
 }
-.nexus-input-inner {
-    max-width: 780px;
+
+.st-key-nexus_input_bar > div {
+    max-width: 900px;
     margin: 0 auto;
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
+    width: 100%;
 }
 
-/* Textarea override */
-.stTextArea textarea {
-    background: #1a1a24 !important;
-    border: 1px solid rgba(255,255,255,0.1) !important;
-    border-radius: 20px !important;
-    color: #e4e4f0 !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.88rem !important;
-    padding: 0.6rem 1.1rem !important;
-    resize: none !important;
-    line-height: 1.5 !important;
-    transition: border-color 0.2s !important;
+/* Contenedor de columnas dentro del compositor */
+.st-key-nexus_input_bar div[data-testid="stHorizontalBlock"] {
+    gap: 0.75rem;
+    align-items: center;
 }
-.stTextArea textarea:focus {
-    border-color: rgba(99,102,241,0.5) !important;
-    box-shadow: 0 0 0 3px rgba(99,102,241,0.08) !important;
-}
-.stTextArea textarea::placeholder { color: #3a3a55 !important; }
-div[data-testid="stTextArea"] { margin-bottom: 0 !important; }
-.stTextArea { margin-bottom: 0 !important; }
 
-/* Botón enviar circular (solo en main, no sidebar) */
-.main-area .stButton > button,
-div[data-testid="column"] + div[data-testid="column"] .stButton > button {
-    background: linear-gradient(135deg, #6366f1, #a78bfa) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 50% !important;
-    width: 42px !important;
-    height: 42px !important;
-    min-width: 42px !important;
+/* Estilo del botón de adjuntar (file uploader) */
+.st-key-nexus_input_bar div[data-testid="stFileUploader"] {
+    width: auto !important;
+    min-width: 44px;
+}
+
+.st-key-nexus_input_bar section[data-testid="stFileUploaderDropzone"] {
+    background: #16161f !important;
+    border: 1px solid rgba(255,255,255,0.09) !important;
+    border-radius: 12px !important;
     padding: 0 !important;
-    font-size: 1.1rem !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    transition: transform 0.15s, box-shadow 0.2s !important;
-    flex-shrink: 0 !important;
-}
-.main-area .stButton > button:hover {
-    transform: scale(1.07) !important;
-    box-shadow: 0 0 18px rgba(99,102,241,0.4) !important;
-}
-.main-area .stButton > button:disabled {
-    opacity: 0.25 !important; transform: none !important;
+    cursor: pointer !important;
 }
 
-/* Padding inferior para no quedar tapado por barra fija */
-.main-area { padding-bottom: 90px; }
+.st-key-nexus_input_bar section[data-testid="stFileUploaderDropzone"]:hover {
+    border-color: #a78bfa !important;
+    background: #1a1a24 !important;
+}
 
-/* Spinner */
-.stSpinner > div { border-top-color: #6366f1 !important; }
+/* Icono del clip usando Font Awesome */
+.st-key-nexus_input_bar section[data-testid="stFileUploaderDropzone"]::before {
+    content: "\\f0c6";
+    font-family: "Font Awesome 6 Free";
+    font-weight: 900;
+    font-size: 1.2rem;
+    color: #6b6b8a;
+    position: absolute;
+}
+
+.st-key-nexus_input_bar section[data-testid="stFileUploaderDropzone"]:hover::before {
+    color: #a78bfa;
+}
+
+/* Ocultar texto interno del uploader */
+.st-key-nexus_input_bar section[data-testid="stFileUploaderDropzone"] span,
+.st-key-nexus_input_bar section[data-testid="stFileUploaderDropzone"] p,
+.st-key-nexus_input_bar section[data-testid="stFileUploaderDropzone"] small {
+    display: none !important;
+}
+
+/* Textarea */
+.st-key-nexus_input_bar textarea {
+    min-height: 44px !important;
+    height: 44px !important;
+    background: #16161f !important;
+    border: 1px solid rgba(255,255,255,0.09) !important;
+    border-radius: 12px !important;
+    color: #e4e4f0 !important;
+    font-family: var(--sans) !important;
+    font-size: 0.9rem !important;
+    line-height: 1.45 !important;
+    padding: 10px 14px !important;
+    resize: none !important;
+}
+
+.st-key-nexus_input_bar textarea:focus {
+    border-color: #6366f1 !important;
+    outline: none !important;
+    box-shadow: 0 0 0 1px rgba(99,102,241,0.3) !important;
+}
+
+.st-key-nexus_input_bar textarea::placeholder {
+    color: #3a3a55 !important;
+}
+
+/* Botón de enviar con flecha hacia arriba */
+.st-key-nexus_input_bar .stButton {
+    width: auto !important;
+}
+
+.st-key-nexus_input_bar .stButton > button {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    border: none !important;
+    border-radius: 12px !important;
+    width: 44px !important;
+    height: 44px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    color: white !important;
+    font-size: 1.3rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+}
+
+.st-key-nexus_input_bar .stButton > button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+}
+
+.st-key-nexus_input_bar .stButton > button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Ajuste de las columnas para mejor centrado */
+.st-key-nexus_input_bar div[data-testid="column"] {
+    display: flex;
+    align-items: center;
+}
+
+
+/* Espaciado adicional para el último mensaje */
+.main-area > div:last-child {
+    margin-bottom: 20px;
+}
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #3a3a55; border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: #2a2a3d; border-radius: 2px; }
 </style>
+
+<script>
+// JavaScript para enviar mensaje con Ctrl+Enter
+document.addEventListener('DOMContentLoaded', function() {
+    // Función para configurar el event listener en el textarea
+    function setupCtrlEnter() {
+        const textarea = document.querySelector('.st-key-nexus_input_bar textarea');
+        if (textarea && !textarea.hasAttribute('data-ctrl-enter-listener')) {
+            textarea.setAttribute('data-ctrl-enter-listener', 'true');
+            textarea.addEventListener('keydown', function(e) {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    const sendButton = document.querySelector('.st-key-nexus_input_bar .stButton button');
+                    if (sendButton && !sendButton.disabled) {
+                        sendButton.click();
+                    }
+                }
+            });
+        }
+    }
+    
+    // Intentar configurar inmediatamente y después de un breve delay
+    setupCtrlEnter();
+    setTimeout(setupCtrlEnter, 500);
+    setTimeout(setupCtrlEnter, 1000);
+    
+    // Usar MutationObserver para detectar cambios en el DOM
+    const observer = new MutationObserver(function(mutations) {
+        setupCtrlEnter();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+});
+</script>
 """, unsafe_allow_html=True)
 
 # ── SVG ───────────────────────────────────────────────────────────────────────
@@ -358,7 +519,16 @@ ICON_LG = '<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="
 
 # ── Session state ─────────────────────────────────────────────────────────────
 def init():
-    for k, v in {"messages": [], "graph": None, "graph_error": None}.items():
+    defaults = {
+        "messages": [],
+        "graph": None,
+        "graph_error": None,
+        "attached_file_name": None,
+        "attached_file_text": None,
+        "chat_input_key": 0,
+        "pending_response": None,
+    }
+    for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 init()
@@ -377,6 +547,7 @@ if st.session_state["graph"] is None and st.session_state["graph_error"] is None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def read_file(f) -> str:
+    """Lee el contenido de un archivo subido (txt, md, pdf)."""
     if not f:
         return ""
     name = f.name.lower()
@@ -398,11 +569,27 @@ def run_graph(user_input: str, doc: str = "") -> dict:
     return g.invoke(create_initial_state(user_input=user_input, document_text=doc or None))
 
 def ic(intent):
+    if not intent:
+        return "#fca5a5"
     return {"planificar":"#818cf8","explicar":"#7dd3fc","resumir":"#6ee7b7"}.get(intent,"#fca5a5")
+
+render_markdown = mistune.create_markdown(escape=True)
+
+def plain_html(text: str) -> str:
+    return html.escape(text or "").replace("\n", "<br>")
+
+def markdown_html(text: str) -> str:
+    return render_markdown(text or "")
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(f'<div style="display:flex;align-items:center;gap:9px;padding:0.2rem 0 0.8rem;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:0.8rem;">{ICON_SM}<span style="font-family:IBM Plex Mono,monospace;font-size:1.05rem;font-weight:700;letter-spacing:0.1em;color:#e4e4f0;">NEX<span style="color:#6366f1;">US</span></span></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:9px;padding:0.2rem 0 0.8rem;'
+        f'border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:0.8rem;">'
+        f'{ICON_SM}<span style="font-family:IBM Plex Mono,monospace;font-size:1.05rem;'
+        f'font-weight:700;letter-spacing:0.1em;color:#e4e4f0;">NEX<span style="color:#6366f1;">US</span></span></div>',
+        unsafe_allow_html=True,
+    )
 
     st.caption("SISTEMA")
     if st.session_state["graph_error"]:
@@ -413,39 +600,42 @@ with st.sidebar:
         st.success("● Sistema listo")
 
     st.divider()
-    st.caption("DOCUMENTO")
-    st.write("Subí un archivo como base de conocimiento.")
-    uploaded_file = st.file_uploader(
-        "archivo", type=["txt","md","pdf"], label_visibility="collapsed"
-    )
-    document_text = read_file(uploaded_file) if uploaded_file else ""
-    if document_text:
-        st.success(f"✓ {uploaded_file.name} · {len(document_text):,} chars")
-
-    st.divider()
     st.caption("QUÉ PODÉS PEDIRME")
     st.write("📅 **Planificar** — cronograma semanal de estudio")
     st.write("💡 **Explicar** — conceptos con ejemplos y analogías")
     st.write("📝 **Resumir** — sintetizá temas o documentos")
+    st.write("📎 **Adjuntar** — usá el clip en el chat para subir un PDF/TXT")
+    st.write("⌨️ **Ctrl+Enter** — enviar mensaje")
 
     if st.session_state["messages"]:
         st.divider()
         st.caption("HISTORIAL")
         user_msgs = [m for m in st.session_state["messages"] if m["role"] == "user"]
         for msg in reversed(user_msgs[-5:]):
-            intent  = msg.get("intent", "—")
+            intent  = msg.get("intent") or "—"
             preview = msg["content"][:48] + "…" if len(msg["content"]) > 48 else msg["content"]
             color   = ic(intent)
-            st.markdown(f'<span style="font-family:monospace;font-size:0.65rem;color:{color};font-weight:600;">{intent.upper()}</span> <span style="font-size:0.78rem;color:#6b6b8a;">{preview}</span>', unsafe_allow_html=True)
+            intent_str = intent if isinstance(intent, str) else "—"
+            st.markdown(
+                f'<span style="font-family:monospace;font-size:0.65rem;color:{color};font-weight:600;">'
+                f'{html.escape(intent_str.upper())}</span> '
+                f'<span style="font-size:0.78rem;color:#6b6b8a;">{html.escape(preview)}</span>',
+                unsafe_allow_html=True,
+            )
         st.write("")
         if st.button("↺ Limpiar conversación", key="clear", use_container_width=True):
             st.session_state["messages"] = []
+            st.session_state["attached_file_name"] = None
+            st.session_state["attached_file_text"] = None
+            st.session_state["pending_response"] = None
+            st.session_state["chat_input_key"] += 1
             st.rerun()
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 provider = "Gemini" if os.getenv("GEMINI_API_KEY") else "Ollama"
 model    = os.getenv("GEMINI_MODEL", os.getenv("DEFAULT_MODEL", "local"))
 
+# Topbar sticky
 st.markdown(
     f'<div class="nexus-topbar">'
     f'<div class="nexus-topbar-left">{ICON_SM}'
@@ -458,97 +648,177 @@ st.markdown(
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
 st.markdown('<div class="main-area">', unsafe_allow_html=True)
+pending_response = st.session_state.get("pending_response")
 
-if not st.session_state["messages"]:
+if not st.session_state["messages"] and not pending_response:
     st.markdown(
         f'<div class="nexus-empty">'
         f'{ICON_LG}'
         f'<div class="nexus-empty-title">¿En qué te ayudo hoy?</div>'
         f'<div class="nexus-empty-sub">Soy tu asistente académico. Planificá tu estudio, aprendé conceptos y generá resúmenes.</div>'
         f'<div class="nexus-cards">'
-        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#818cf8;">📅 Planificar</div><div class="nexus-card-text">"Quiero estudiar álgebra lineal en dos semanas"</div></div>'
-        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#7dd3fc;">💡 Explicar</div><div class="nexus-card-text">"Explicame qué es una integral definida"</div></div>'
-        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#6ee7b7;">📝 Resumir</div><div class="nexus-card-text">"Resumí el tema de distribuciones de probabilidad"</div></div>'
-        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#a78bfa;">📄 Documento</div><div class="nexus-card-text">Subí un PDF o TXT y pedí que lo resuma</div></div>'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#818cf8;">📅 Planificar</div>'
+        f'<div class="nexus-card-text">"Quiero estudiar álgebra lineal en dos semanas"</div></div>'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#7dd3fc;">💡 Explicar</div>'
+        f'<div class="nexus-card-text">"Explicame qué es una integral definida"</div></div>'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#6ee7b7;">📝 Resumir</div>'
+        f'<div class="nexus-card-text">"Resumí el tema de distribuciones de probabilidad"</div></div>'
+        f'<div class="nexus-card"><div class="nexus-card-label" style="color:#a78bfa;">📎 Adjuntar</div>'
+        f'<div class="nexus-card-text">Usá el clip en el chat para subir un PDF o TXT y pedí que lo resuma</div></div>'
         f'</div></div>',
         unsafe_allow_html=True,
     )
 else:
     for msg in st.session_state["messages"]:
         if msg["role"] == "user":
+            file_badge = ""
+            if msg.get("attached_file"):
+                attached_file = html.escape(msg["attached_file"])
+                file_badge = (
+                    f'<div style="display:flex;justify-content:flex-end;padding:0 1.5rem 3px;">'
+                    f'<span class="file-badge">'
+                    f'<i class="fas fa-paperclip" style="font-size:0.65rem;"></i> {attached_file}'
+                    f'</span></div>'
+                )
             st.markdown(
+                f'{file_badge}'
                 f'<div class="msg-user">'
-                f'<div class="bub-user">{msg["content"]}</div>'
+                f'<div class="bub-user">{plain_html(msg["content"])}</div>'
                 f'<div class="av-user">TÚ</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
         else:
-            intent  = msg.get("intent", "desconocido")
-            topics  = msg.get("topics") or []
-            elapsed = msg.get("elapsed", 0)
-            chips   = "".join(f'<span class="topic-chip">{t}</span>' for t in topics[:4])
             st.markdown(
-                f'<div class="meta-row">'
-                f'<span class="ib ib-{intent}">▸ {intent}</span>'
-                f'{chips}'
-                f'<span class="elapsed">{elapsed:.1f}s</span>'
+                f'<div class="msg-bot">'
+                f'<div class="av-bot">N</div>'
+                f'<div class="bub-bot"><div class="message-content">{markdown_html(msg["content"])}</div></div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown(
-                f'<div class="msg-bot"><div class="av-bot">◈</div><div class="bub-bot">',
-                unsafe_allow_html=True,
-            )
-            st.markdown(msg["content"])
-            st.markdown("</div></div>", unsafe_allow_html=True)
+    if pending_response:
+        st.markdown(
+            f'<div class="msg-bot">'
+            f'<div class="av-bot">N</div>'
+            f'<div class="bub-bot">'
+            f'<div class="typing-content">Pensando'
+            f'<span class="typing-dots"><span></span><span></span><span></span></span>'
+            f'</div></div></div>',
+            unsafe_allow_html=True,
+        )
 
-st.markdown("</div>", unsafe_allow_html=True)  # cierre main-area
+st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Input fijo ────────────────────────────────────────────────────────────────
-st.markdown('<div class="nexus-input-bar"><div class="nexus-input-inner">', unsafe_allow_html=True)
+# ── Input fijo: archivo, mensaje y enviar ─────────────────────────────────────
+has_file = bool(st.session_state["attached_file_name"])
+fname    = st.session_state["attached_file_name"] or ""
+input_key = f"chat_input_{st.session_state['chat_input_key']}"
+is_thinking = bool(pending_response)
 
-col_txt, col_btn = st.columns([14, 1])
-with col_txt:
-    user_input = st.text_area(
-        "msg", placeholder="Escribí tu consulta aquí…",
-        height=52, label_visibility="collapsed", key="chat_input",
+with st.container(key="nexus_input_bar"):
+    if has_file:
+        st.markdown(
+            f'<div class="composer-file-badge"><span class="file-badge">'
+            f'<i class="fas fa-paperclip"></i> {html.escape(fname)}'
+            f'</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    col_file, col_text, col_send = st.columns(
+        [0.1, 0.8, 0.1],
+        gap="small",
+        vertical_alignment="center",
     )
-with col_btn:
-    send = st.button(
-        "↑", key="send_btn",
-        disabled=not (user_input or "").strip() or bool(st.session_state["graph_error"]),
-        help="Enviar",
-    )
 
-st.markdown("</div></div>", unsafe_allow_html=True)
+    with col_file:
+        upload_key = f"fu_{len(st.session_state['messages'])}_{st.session_state['chat_input_key']}"
+        uploaded_file = st.file_uploader(
+            "Adjuntar archivo",
+            type=["txt", "md", "pdf"],
+            label_visibility="collapsed",
+            key=upload_key,
+        )
+        if uploaded_file is not None and st.session_state["attached_file_name"] != uploaded_file.name:
+            st.session_state["attached_file_name"] = uploaded_file.name
+            st.session_state["attached_file_text"] = read_file(uploaded_file)
+            st.rerun()
+
+    with col_text:
+        user_input = st.text_area(
+            "Mensaje",
+            placeholder="Escribí tu consulta aquí… (Ctrl+Enter para enviar)",
+            height=42,
+            label_visibility="collapsed",
+            key=input_key,
+            disabled=is_thinking,
+        )
+
+    with col_send:
+        has_text = bool((user_input or "").strip())
+        send = st.button(
+            "↑",  # Flecha hacia arriba
+            key="send_btn",
+            disabled=is_thinking or not has_text or bool(st.session_state["graph_error"]),
+            help="Enviar mensaje (Ctrl+Enter)",
+            use_container_width=True,
+        )
 
 # ── Procesar ──────────────────────────────────────────────────────────────────
 if send and (user_input or "").strip():
+    attached_name = st.session_state.get("attached_file_name")
+    attached_text = st.session_state.get("attached_file_text") or ""
+    user_text = user_input.strip()
+
     st.session_state["messages"].append({
-        "role": "user", "content": user_input.strip(),
-        "intent": None, "topics": [], "elapsed": 0, "error": None,
+        "role":          "user",
+        "content":       user_text,
+        "intent":        None,
+        "topics":        [],
+        "elapsed":       0,
+        "error":         None,
+        "attached_file": attached_name,
     })
-    with st.spinner("Procesando…"):
-        t0 = time.time()
-        try:
-            result  = run_graph(user_input.strip(), document_text)
-            elapsed = time.time() - t0
-            st.session_state["messages"].append({
-                "role":    "assistant",
-                "content": result.get("final_response") or "_Sin respuesta. Intentá reformular._",
-                "intent":  result.get("intent", "desconocido"),
-                "topics":  result.get("topics") or [],
-                "elapsed": elapsed,
-                "error":   result.get("error"),
-            })
-            st.session_state["messages"][-2]["intent"] = result.get("intent", "desconocido")
-        except Exception as e:
-            elapsed = time.time() - t0
-            st.session_state["messages"].append({
-                "role": "assistant",
-                "content": f"**Error:** `{e}`",
-                "intent": "desconocido", "topics": [],
-                "elapsed": elapsed, "error": str(e),
-            })
+    st.session_state["pending_response"] = {
+        "user_input": user_text,
+        "attached_text": attached_text,
+        "message_index": len(st.session_state["messages"]) - 1,
+    }
+
+    st.session_state["attached_file_name"] = None
+    st.session_state["attached_file_text"] = None
+    st.session_state["chat_input_key"] += 1
+    st.rerun()
+
+pending = st.session_state.get("pending_response")
+if pending and not st.session_state["graph_error"]:
+    t0 = time.time()
+    try:
+        result  = run_graph(pending["user_input"], pending.get("attached_text") or "")
+        elapsed = time.time() - t0
+        st.session_state["messages"].append({
+            "role":    "assistant",
+            "content": result.get("final_response") or "_Sin respuesta. Intentá reformular._",
+            "intent":  result.get("intent", "desconocido"),
+            "topics":  result.get("topics") or [],
+            "elapsed": elapsed,
+            "error":   result.get("error"),
+        })
+        idx = pending.get("message_index")
+        if isinstance(idx, int) and 0 <= idx < len(st.session_state["messages"]):
+            st.session_state["messages"][idx]["intent"] = result.get("intent", "desconocido")
+    except Exception as e:
+        elapsed = time.time() - t0
+        st.session_state["messages"].append({
+            "role":    "assistant",
+            "content": f"**Error:** `{e}`",
+            "intent":  "desconocido",
+            "topics":  [],
+            "elapsed": elapsed,
+            "error":   str(e),
+        })
+        idx = pending.get("message_index")
+        if isinstance(idx, int) and 0 <= idx < len(st.session_state["messages"]):
+            st.session_state["messages"][idx]["intent"] = "desconocido"
+    finally:
+        st.session_state["pending_response"] = None
     st.rerun()
